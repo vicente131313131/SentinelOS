@@ -1,17 +1,10 @@
 # SentinelOS
 
-SentinelOS is a 64-bit teaching and demonstration operating system designed for clarity, extensibility and modern software-engineering practice.  The project is implemented in C (cross-compiled with **x86_64-elf-gcc**) and x86-64 assembly and targets virtual machines such as QEMU/Bochs, it is not recommended to run this in real hardware, unless you know what you are doing
----
-
-## 1. Project Objectives
-
-1. **Educational value** – provide a readable, self-contained code base that illustrates fundamental OS topics such as memory-management, interrupt handling and file systems.
-2. **Modular architecture** – each subsystem (memory manager, drivers, graphics, shell) is isolated behind clear interfaces, enabling targeted experimentation and replacement.
-3. **Professional workflow** – cross-platform build system, continuous serial logging and a consistent coding style facilitate collaboration and long-term maintenance.
+SentinelOS is a 64-bit hobby project operating system. The project is implemented in C (cross-compiled with **x86_64-elf-gcc**) and x86-64 assembly and targets virtual machines such as QEMU, it is not recommended to run this in real hardware, unless you know what you are doing
 
 ---
 
-## 2. Feature Overview
+## 1. Feature Overview
 
 * 64-bit long-mode kernel initialised by a Multiboot-2 compliant GRUB bootloader.
 * Graphical boot splash rendered with the in-tree *SpringIntoView* immediate-mode framebuffer library.
@@ -27,7 +20,7 @@ Upcoming milestones include an ELF user-space loader, AHCI/NVMe driver, pre-empt
 
 ---
 
-## 3. System Requirements
+## 2. System Requirements
 
 | Component | Version / Remark |
 |-----------|------------------|
@@ -40,7 +33,7 @@ A pre-built cross-compiler is available via **Homebrew** (macOS) or most Linux d
 
 ---
 
-## 4. Building the Project
+## 3. Building the Project
 
 ```bash
 # Clone repository
@@ -55,7 +48,7 @@ The build generates `sentinelos.iso` in the project root.
 
 ---
 
-## 5. Running under QEMU
+## 4. Running under QEMU
 
 ```bash
 $ qemu-system-x86_64 \
@@ -78,7 +71,7 @@ For physical hardware the ISO is El-Torito/MBR hybrid; it can be flashed with st
 
 ---
 
-## 6. Shell Command Reference
+## 5. Shell Command Reference
 
 | Command | Description |
 |---------|-------------|
@@ -97,7 +90,7 @@ For physical hardware the ISO is El-Torito/MBR hybrid; it can be flashed with st
 
 ---
 
-## 7. Repository Layout
+## 6. Repository Layout
 
 ```
 .
@@ -114,7 +107,7 @@ For physical hardware the ISO is El-Torito/MBR hybrid; it can be flashed with st
 
 ---
 
-## 8. Contribution Guidelines
+## 7. Contribution Guidelines
 
 Contributions that improve the code base, add new drivers or enhance documentation are welcome.
 
@@ -126,15 +119,8 @@ For larger changes please open an issue to discuss design details prior to imple
 
 ---
 
-## 9. License
+## 8. License
 
 SentinelOS is distributed under the **MIT License**.  See `LICENSE` for the full text.
 
 ---
-
-## 10. Acknowledgements
-
-* **James Molloy** – Meaty Skeleton tutorial.
-* **OSDev.org** – invaluable wiki & forum.
-* **stb_truetype** by Sean Barrett – font rasterisation.
-* Everyone contributing to open-source tooling that makes this project possible.

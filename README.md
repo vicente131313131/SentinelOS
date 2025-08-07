@@ -71,7 +71,7 @@ For physical hardware the ISO is El-Torito/MBR hybrid; it can be flashed with st
 
 ---
 
-## 5. Shell Command Reference
+## 5. Command Reference
 
 | Command | Description |
 |---------|-------------|
@@ -87,40 +87,5 @@ For physical hardware the ISO is El-Torito/MBR hybrid; it can be flashed with st
 | `cd <dir>` / `pwd` | Navigate virtual file system |
 | `meminfo` / `heapinfo` | Memory statistics |
 | `vbeinfo` | VESA framebuffer mode information |
-
----
-
-## 6. Repository Layout
-
-```
-.
-├─ boot/             # Assembly routines (boot sector & kernel entry)
-├─ drivers/          # Device drivers (keyboard, mouse, PIC, etc.)
-├─ SpringIntoView/   # Lightweight framebuffer graphics library
-├─ fs/               # Files copied into the initrd
-├─ kernel.c          # Kernel entry point and main loop
-├─ pmm.c, heap.c     # Memory management implementation
-├─ vfs.c, initrd.c   # Virtual File System and initrd loader
-├─ Makefile          # Top-level build script
-└─ linker.ld         # Linker script
-```
-
----
-
-## 7. Contribution Guidelines
-
-Contributions that improve the code base, add new drivers or enhance documentation are welcome.
-
-1. Fork the repository and create a feature branch.
-2. Follow the existing coding style; keep commits focused.
-3. Verify the build with `make` and boot the resulting image in QEMU before opening a pull request.
-
-For larger changes please open an issue to discuss design details prior to implementation.
-
----
-
-## 8. License
-
-SentinelOS is distributed under the **MIT License**.  See `LICENSE` for the full text.
 
 ---

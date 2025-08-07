@@ -1,9 +1,6 @@
 # SentinelOS
 
-SentinelOS is a 64-bit teaching and demonstration operating system designed for clarity, extensibility and modern software-engineering practice.  The project is implemented in C (cross-compiled with **x86_64-elf-gcc**) and x86-64 assembly and targets virtual machines such as QEMU/Bochs, while remaining capable of booting on real hardware.
-
-![SentinelOS graphical boot](docs/screenshot_boot.png)
-
+SentinelOS is a 64-bit teaching and demonstration operating system designed for clarity, extensibility and modern software-engineering practice.  The project is implemented in C (cross-compiled with **x86_64-elf-gcc**) and x86-64 assembly and targets virtual machines such as QEMU/Bochs, it is not recommended to run this in real hardware, unless you know what you are doing
 ---
 
 ## 1. Project Objectives

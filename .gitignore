@@ -1,0 +1,14 @@
+# Build artifacts
+*.o
+*.bin
+*.iso
+iso/
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+build/
+*.img

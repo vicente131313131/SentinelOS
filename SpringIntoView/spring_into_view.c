@@ -153,7 +153,7 @@ void siv_clear(uint32_t color) {
 }
 
 void siv_draw_cursor(int x, int y, uint32_t color) {
-    // A simple cursor shape
+    // A simple cursor shape, Not used was for a "Desktop"
     const char* cursor_map[] = {
         "X           ",
         "XX          ",

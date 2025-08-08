@@ -87,7 +87,7 @@ SpringIntoView/stb_truetype_impl.o: SpringIntoView/stb_truetype_impl.c
 	$(CC) $(CFLAGS) -c SpringIntoView/stb_truetype_impl.c -o SpringIntoView/stb_truetype_impl.o
 
 ASM_OBJS = isr_asm.o
-C_SRCS = kernel.c isr.c idt.c pic.c pmm.c pit.c keyboard.c serial.c string.c vfs.c initrd.c heap.c vmm.c mouse.c vbe.c SpringIntoView/spring_into_view.c SpringIntoView/stb_truetype_impl.c
+C_SRCS = kernel.c isr.c idt.c pic.c pmm.c pit.c keyboard.c serial.c string.c vfs.c initrd.c heap.c vmm.c mouse.c vbe.c bochs_vbe.c SpringIntoView/spring_into_view.c SpringIntoView/stb_truetype_impl.c
 OBJS = $(C_SRCS:.c=.o) $(ASM_OBJS)
 
 $(KERNEL): $(OBJS) multiboot_header.o kernel_entry.o

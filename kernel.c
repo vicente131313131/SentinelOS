@@ -17,6 +17,7 @@
 #include "mouse.h"
 
 #include "vbe.h"
+#include "bochs_vbe.h"
 #include "io.h"
 
 struct framebuffer_info {
@@ -112,6 +113,9 @@ static uint16_t saved_cursor_entry = 0;
 static char shell_buffer[SHELL_BUFFER_SIZE];
 static size_t shell_buffer_len = 0;
 static size_t shell_cursor_pos = 0;
+static size_t shell_sel_anchor = (size_t)-1; // selection anchor index or (size_t)-1 when none
+static char clipboard[SHELL_BUFFER_SIZE];
+static size_t shell_prompt_col = 0; // column where input starts on the current line
 static char command_history[HISTORY_SIZE][SHELL_BUFFER_SIZE];
 static int history_count = 0;
 static int history_index = 0;
@@ -121,6 +125,9 @@ static struct vfs_node* cwd = NULL;
 
 // Global variable to hold the Multiboot 2 info address
 static uint64_t g_mb2_info_addr = 0;
+// Framebuffer runtime state (used by graphics overlay in Bochs/QEMU after vbeset)
+// duplicate removed
+// static copies exist later; remove these duplicates
 
 // Function declarations
 static inline uint16_t vga_entry(unsigned char uc, uint8_t color);
@@ -146,6 +153,46 @@ void draw_progress_bar_background(void);
 void init_terminal(void);
 void terminal_writehex(uint64_t n);
 void terminal_writedec(size_t n);
+static void init_graphics_bochs_runtime(void);
+
+static void shell_redraw_line_with_selection(void) {
+    // Move cursor to start of input (after prompt)
+    size_t back = (terminal_column > shell_prompt_col) ? (terminal_column - shell_prompt_col) : 0;
+    for (size_t i = 0; i < back; i++) terminal_putchar('\b');
+
+    // Determine selection range
+    size_t sel_start = (size_t)-1, sel_end = (size_t)-1;
+    if (shell_sel_anchor != (size_t)-1 && shell_sel_anchor != shell_cursor_pos) {
+        sel_start = (shell_sel_anchor < shell_cursor_pos) ? shell_sel_anchor : shell_cursor_pos;
+        sel_end   = (shell_sel_anchor < shell_cursor_pos) ? shell_cursor_pos : shell_sel_anchor;
+    }
+
+    // Draw buffer with inverted colors for selection
+    uint8_t normal = terminal_color;
+    uint8_t inverted = ((normal & 0xF) << 4) | ((normal >> 4) & 0xF);
+    for (size_t i = 0; i < shell_buffer_len; i++) {
+        uint8_t color = normal;
+        if (sel_start != (size_t)-1 && i >= sel_start && i < sel_end) {
+            color = inverted;
+        }
+        terminal_put_entry_at(shell_buffer[i], color, shell_prompt_col + i, terminal_row);
+    }
+    // Erase next cell to clear leftovers when line shrinks
+    terminal_put_entry_at(' ', normal, shell_prompt_col + shell_buffer_len, terminal_row);
+
+    // Move hardware cursor to logical cursor position
+    terminal_column = shell_prompt_col + shell_cursor_pos;
+    draw_cursor();
+}
+
+// (moved runtime graphics init below fb_info and graphics_initialized definitions)
+
+// Supported shell commands for autocomplete
+static const char* SHELL_COMMANDS[] = {
+    "help", "clear", "echo", "info", "graphics", "ls", "cat", "touch", "rm",
+    "mkdir", "cd", "pwd", "meminfo", "heapinfo", "sent", "vbeinfo", "vbeset"
+};
+static const size_t NUM_SHELL_COMMANDS = sizeof(SHELL_COMMANDS) / sizeof(SHELL_COMMANDS[0]);
 
 // Function to create a VGA entry
 static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
@@ -303,6 +350,7 @@ void shell_prompt() {
     get_cwd_path(path_buf, 256);
     terminal_writestring(path_buf);
     terminal_writestring("> ");
+    shell_prompt_col = terminal_column; // remember where input starts
 }
 
 void shell_clear() {
@@ -329,6 +377,7 @@ void shell_handle_command(const char* cmd) {
         terminal_writestring(" - heapinfo: Show heap info\n");
         terminal_writestring(" - sent: Display beautiful ASCII art\n");
         terminal_writestring(" - vbeinfo: Show VBE info\n");
+        terminal_writestring(" - vbeset <WxHxbpp>: Set Bochs/QEMU VBE mode (e.g., vbeset 1280x720x32)\n");
     } else if (strcmp(cmd, "clear") == 0) {
         shell_clear();
     } else if (strcmp(cmd, "sent") == 0) {
@@ -436,22 +485,58 @@ void shell_handle_command(const char* cmd) {
             terminal_writestring("rm: path not found.\n");
         }
     } else if (strcmp(cmd, "info") == 0) {
-        const char* art_info[] = {
-" ▗▄▄▖▗▄▄▄▖▗▖  ▗▖▗▄▄▄▖▗▄▄▄▖▗▖  ▗▖▗▄▄▄▖▗▖    ▗▄▖  ▗▄▄▖",
-"▐▌   ▐▌   ▐▛▚▖▐▌  █    █  ▐▛▚▖▐▌▐▌   ▐▌   ▐▌ ▐▌▐▌   ",
-" ▝▀▚▖▐▛▀▀▘▐▌ ▝▜▌  █    █  ▐▌ ▝▜▌▐▛▀▀▘▐▌   ▐▌ ▐▌ ▝▀▚▖",
-"▗▄▄▞▘▐▙▄▄▖▐▌  ▐▌  █  ▗▄█▄▖▐▌  ▐▌▐▙▄▄▖▐▙▄▄▖▝▚▄▞▘▗▄▄▞▘",
-"                                                    ",
-"                                                    ",
-"                                                    ",
+        uint8_t prev_color = terminal_color;
+        const char* banner[] = {
+"  ____            _        _        ___   ___  ",
+" |  _ \\ ___  ___ | |_ __ _| |_ ___ / _ \\ / _ \\ ",
+" | |_) / _ \\/ _ \\| __/ _` | __/ _ \\ | | | | | |",
+" |  _ <  __/ (_) | || (_| | ||  __/ |_| | |_| |",
+" |_| \\___|\\___/ \\__\\__,_|\\__\\___|\\___/ \\___/ ",
 NULL};
-        for(int i=0; art_info[i]; ++i){
-            terminal_writestring(art_info[i]);
+        terminal_set_color(VGA_LIGHT_CYAN | VGA_BLACK << 4);
+        for (int i = 0; banner[i]; ++i) {
+            terminal_writestring(banner[i]);
             terminal_writestring("\n");
         }
+
+        // Display VGA colour palette
+        terminal_writestring("\n");
+        for (int c = 0; c < 16; ++c) {
+            uint8_t colour = (c & 0x0F) | ((c & 0x0F) << 4); // FG=BG=c
+            terminal_set_color(colour);
+            terminal_putchar(219); // 0xDB full block in CP-437
+            terminal_putchar(219);
+        }
+        terminal_writestring("\n\n");
+
+        terminal_set_color(prev_color);
         terminal_writestring("SentinelOS v0.2 Pre-Alpha by Vicente Velasquez, Last updated: 2025 June 12th\n");
     } else if (strcmp(cmd, "graphics") == 0) {
         terminal_writestring("Graphics mode is only available at boot.\n");
+    } else if (strncmp(cmd, "vbeset ", 7) == 0) {
+        const char* arg = cmd + 7;
+        // Parse WxHxbpp
+        uint32_t w = 0, h = 0, b = 0;
+        const char* p = arg;
+        while (*p >= '0' && *p <= '9') { w = w*10 + (*p - '0'); p++; }
+        if (*p == 'x') p++; else { terminal_writestring("Usage: vbeset <WxHxbpp>\n"); goto after_cmd; }
+        while (*p >= '0' && *p <= '9') { h = h*10 + (*p - '0'); p++; }
+        if (*p == 'x') p++; else { terminal_writestring("Usage: vbeset <WxHxbpp>\n"); goto after_cmd; }
+        while (*p >= '0' && *p <= '9') { b = b*10 + (*p - '0'); p++; }
+        if (w == 0 || h == 0 || (b != 24 && b != 32)) { terminal_writestring("Invalid mode. Use bpp 24 or 32.\n"); goto after_cmd; }
+
+        if (vbe_set_mode_lfb((uint16_t)w, (uint16_t)h, (uint16_t)b)) {
+            // Re-initialize graphics using DISPI parameters directly
+            init_graphics_bochs_runtime();
+            if (1 /* graphics initialized */) {
+                draw_progress_bar_background();
+                update_progress_bar(0, "Graphics re-initialized after mode set.");
+                siv_draw_text(10, 10, "Console switched to graphics mode.", 1.0f, 0xFFFFFFFF);
+            }
+        } else {
+            terminal_writestring("Failed to set mode (DISPI not available or rejected).\n");
+        }
+        goto after_cmd;
     } else if (strncmp(cmd, "mkdir ", 6) == 0) {
         const char* path = cmd + 6;
         char path_buf[256];
@@ -570,6 +655,7 @@ NULL};
         terminal_writestring(cmd);
         terminal_writestring("\n");
     }
+after_cmd:
     
     if (strlen(cmd) > 0) {
         strcpy(command_history[history_index], cmd);
@@ -599,12 +685,29 @@ void shell_input_char(char c) {
             draw_cursor();
             shell_cursor_pos--;
         }
+        // Cancel selection when moving without shift
+        shell_sel_anchor = (size_t)-1;
     } else if (c == KEY_RIGHT) {
         if (shell_cursor_pos < shell_buffer_len) {
             erase_cursor();
             terminal_column++;
             draw_cursor();
             shell_cursor_pos++;
+        }
+        shell_sel_anchor = (size_t)-1;
+    } else if (c == KEY_SEL_LEFT) {
+        if (shell_sel_anchor == (size_t)-1) shell_sel_anchor = shell_cursor_pos;
+        if (shell_cursor_pos > 0) {
+            shell_cursor_pos--;
+            erase_cursor(); terminal_column--; draw_cursor();
+            shell_redraw_line_with_selection();
+        }
+    } else if (c == KEY_SEL_RIGHT) {
+        if (shell_sel_anchor == (size_t)-1) shell_sel_anchor = shell_cursor_pos;
+        if (shell_cursor_pos < shell_buffer_len) {
+            shell_cursor_pos++;
+            erase_cursor(); terminal_column++; draw_cursor();
+            shell_redraw_line_with_selection();
         }
     } else if (c == '\b') {
         if (shell_cursor_pos > 0) {
@@ -630,9 +733,51 @@ void shell_input_char(char c) {
                 draw_cursor();
             }
         }
+        shell_sel_anchor = (size_t)-1;
+    } else if (c == '\t') {
+        // Autocomplete current buffer from SHELL_COMMANDS
+        if (shell_buffer_len > 0) {
+            const char* best = NULL;
+            size_t best_len = 0;
+            for (size_t i = 0; i < NUM_SHELL_COMMANDS; ++i) {
+                const char* cmd = SHELL_COMMANDS[i];
+                size_t j = 0;
+                while (j < shell_buffer_len && cmd[j] && cmd[j] == shell_buffer[j]) {
+                    j++;
+                }
+                if (j == shell_buffer_len) {
+                    // Candidate match; choose the shortest unique completion that extends input
+                    if (!best || strlen(cmd) < best_len) {
+                        best = cmd;
+                        best_len = strlen(cmd);
+                    }
+                }
+            }
+            if (best && best_len > shell_buffer_len) {
+                // Replace current line content visually: erase current, write completion
+                size_t erase = shell_buffer_len;
+                for (size_t i = 0; i < erase; i++) {
+                    terminal_putchar('\b');
+                }
+                strcpy(shell_buffer, best);
+                shell_buffer_len = strlen(shell_buffer);
+                shell_cursor_pos = shell_buffer_len;
+                terminal_writestring(shell_buffer);
+            }
+        }
     } else if (c >= 32 && c < 127) {
         if (shell_buffer_len < SHELL_BUFFER_SIZE - 1) {
-            // Insert character at cursor position
+            // Insert character at cursor position (clear selection if any)
+            if (shell_sel_anchor != (size_t)-1 && shell_sel_anchor != shell_cursor_pos) {
+                size_t sel_start = (shell_sel_anchor < shell_cursor_pos) ? shell_sel_anchor : shell_cursor_pos;
+                size_t sel_end = (shell_sel_anchor < shell_cursor_pos) ? shell_cursor_pos : shell_sel_anchor;
+                memmove(shell_buffer + sel_start, shell_buffer + sel_end, shell_buffer_len - sel_end + 1);
+                shell_buffer_len -= (sel_end - sel_start);
+                shell_cursor_pos = sel_start;
+                shell_sel_anchor = (size_t)-1;
+                shell_redraw_line_with_selection();
+            }
+            // Insert
             memmove(shell_buffer + shell_cursor_pos + 1, shell_buffer + shell_cursor_pos, shell_buffer_len - shell_cursor_pos + 1);
             shell_buffer[shell_cursor_pos] = c;
             shell_buffer_len++;
@@ -685,6 +830,40 @@ void shell_input_char(char c) {
             shell_buffer[0] = '\0';
         }
         shell_cursor_pos = shell_buffer_len;
+        shell_sel_anchor = (size_t)-1;
+    } else if (c == KEY_COPY) {
+        // Copy selection to clipboard
+        if (shell_sel_anchor != (size_t)-1 && shell_sel_anchor != shell_cursor_pos) {
+            size_t sel_start = (shell_sel_anchor < shell_cursor_pos) ? shell_sel_anchor : shell_cursor_pos;
+            size_t sel_end   = (shell_sel_anchor < shell_cursor_pos) ? shell_cursor_pos : shell_sel_anchor;
+            size_t n = sel_end - sel_start;
+            if (n >= SHELL_BUFFER_SIZE) n = SHELL_BUFFER_SIZE - 1;
+            memcpy(clipboard, shell_buffer + sel_start, n);
+            clipboard[n] = '\0';
+        }
+    } else if (c == KEY_PASTE) {
+        // Paste clipboard at cursor (replace selection if any)
+        size_t clip_len = strlen(clipboard);
+        if (clip_len > 0) {
+            if (shell_sel_anchor != (size_t)-1 && shell_sel_anchor != shell_cursor_pos) {
+                size_t sel_start = (shell_sel_anchor < shell_cursor_pos) ? shell_sel_anchor : shell_cursor_pos;
+                size_t sel_end = (shell_sel_anchor < shell_cursor_pos) ? shell_cursor_pos : shell_sel_anchor;
+                memmove(shell_buffer + sel_start, shell_buffer + sel_end, shell_buffer_len - sel_end + 1);
+                shell_buffer_len -= (sel_end - sel_start);
+                shell_cursor_pos = sel_start;
+                shell_sel_anchor = (size_t)-1;
+            }
+            if (shell_buffer_len + clip_len >= SHELL_BUFFER_SIZE) clip_len = SHELL_BUFFER_SIZE - 1 - shell_buffer_len;
+            memmove(shell_buffer + shell_cursor_pos + clip_len, shell_buffer + shell_cursor_pos, shell_buffer_len - shell_cursor_pos + 1);
+            memcpy(shell_buffer + shell_cursor_pos, clipboard, clip_len);
+            shell_buffer_len += clip_len;
+            // Redraw from cursor
+            for (size_t i = shell_cursor_pos; i < shell_buffer_len; i++) terminal_putchar(shell_buffer[i]);
+            // Move cursor back to end of pasted text
+            size_t move = shell_buffer_len - (shell_cursor_pos + clip_len);
+            for (size_t i = 0; i < move; i++) { erase_cursor(); terminal_column--; draw_cursor(); }
+            shell_cursor_pos += clip_len;
+        }
     }
 }
 
@@ -738,6 +917,35 @@ void draw_progress_bar_background() {
     siv_draw_rect(fb_info.width / 2 - 200, fb_info.height / 2 - 10, 400, 20, 0x00333333, true);
 }
 
+// Runtime graphics init using Bochs/QEMU DISPI after a mode change
+static void init_graphics_bochs_runtime(void) {
+    if (!bochs_vbe_is_present()) {
+        serial_writestring("[Graphics] DISPI not present; cannot init runtime graphics.\n");
+        graphics_initialized = false;
+        return;
+    }
+
+    uint16_t w, h, bpp;
+    bochs_vbe_get_mode(&w, &h, &bpp);
+    if (w == 0 || h == 0 || (bpp != 24 && bpp != 32)) {
+        serial_writestring("[Graphics] Invalid DISPI mode parameters.\n");
+        graphics_initialized = false;
+        return;
+    }
+
+    uint32_t bytes_per_pixel = bpp / 8;
+    uint32_t pitch = (uint32_t)w * bytes_per_pixel;
+    uint64_t lfb_phys = 0xE0000000ULL; // QEMU/Bochs VBE default LFB base
+    // Note: our boot code identity-maps 0..4GB using 2MB huge pages, so the LFB
+    // is already mapped. Do not attempt to remap with 4KB pages here.
+
+    siv_init(w, h, pitch, bpp, (void*)(uintptr_t)lfb_phys);
+    fb_info.width = w;
+    fb_info.height = h;
+    siv_init_font();
+    siv_clear(0x00112233);
+    graphics_initialized = true;
+}
 void update_progress_bar(int percentage, const char* text) {
     if (!graphics_initialized) return;
 

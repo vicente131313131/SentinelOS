@@ -1,3 +1,4 @@
+/* vmm.c – Minimal 4-level paging helpers for mapping/unmapping pages */
 #include "vmm.h"
 #include "pmm.h"
 #include "serial.h"
@@ -9,6 +10,7 @@
 #define ADDRESS_MASK (~PAGING_FLAG_MASK)
 #define PAGE_HUGE (1 << 7)
 
+/* Read CR3 (physical address of PML4) and return it as a pointer. */
 static uint64_t* get_pml4() {
     uint64_t cr3;
     asm volatile("mov %%cr3, %0" : "=r"(cr3));
@@ -17,10 +19,12 @@ static uint64_t* get_pml4() {
     return (uint64_t*)(cr3);
 }
 
+/* Invalidate a single TLB entry for the given virtual address. */
 static inline void invlpg(void* addr) {
     asm volatile("invlpg (%0)" : : "b"(addr) : "memory");
 }
 
+/* Walk to the next paging level, optionally allocating a new table. */
 static uint64_t* get_next_level_table(uint64_t* table, uint16_t index, bool allocate) {
     uint64_t entry = table[index];
     if (entry & PAGE_PRESENT) {
@@ -45,6 +49,7 @@ static uint64_t* get_next_level_table(uint64_t* table, uint16_t index, bool allo
     return (uint64_t*)new_table_phys;
 }
 
+/* Map one 4KB page at virt_addr -> phys_addr with flags. */
 bool vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
     uint64_t* pml4 = get_pml4();
     uint16_t pml4_index = (virt_addr >> 39) & 0x1FF;
@@ -72,6 +77,7 @@ bool vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
     return true;
 }
 
+/* Unmap one 4KB page at virt_addr. */
 void vmm_unmap_page(uint64_t virt_addr) {
     uint64_t* pml4 = get_pml4();
     uint16_t pml4_index = (virt_addr >> 39) & 0x1FF;
@@ -92,6 +98,7 @@ void vmm_unmap_page(uint64_t virt_addr) {
     invlpg((void*)virt_addr);
 }
 
+/* Identity-map [phys_addr, phys_addr+size) using 4KB pages. */
 bool vmm_identity_map_range(uint64_t phys_addr, size_t size, uint64_t flags) {
     uint64_t aligned_start = phys_addr & ~0xFFFULL;
     uint64_t aligned_end   = (phys_addr + size + 0xFFFULL) & ~0xFFFULL;
@@ -103,9 +110,8 @@ bool vmm_identity_map_range(uint64_t phys_addr, size_t size, uint64_t flags) {
     return true;
 }
 
+/* Print CR3 address for debugging. */
 void vmm_init() {
-    // For now, we just use the page tables set up by the bootloader.
-    // We can verify we can read cr3.
     uint64_t cr3;
     asm volatile("mov %%cr3, %0" : "=r"(cr3));
     serial_writestring("[Serial] VMM Initialized, CR3 is at: ");

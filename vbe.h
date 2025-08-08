@@ -2,6 +2,7 @@
 #define VBE_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include "multiboot2.h"
 
 typedef struct {
@@ -39,8 +40,30 @@ typedef struct {
     uint16_t reserved3;
 } __attribute__((packed)) vbe_mode_info_t;
 
+/* VBE Controller Information block (partial) as defined by VESA BIOS Extensions
+ * Bootloader (GRUB) fills this structure via BIOS INT 0x10 AX=0x4F00 and copies
+ * it into the Multiboot2 tag. We only define the fields we need: the pointer to
+ * the video mode list. All other fields can be extended later if required.
+ */
+typedef struct {
+    char     signature[4];      /* 'VESA' */
+    uint16_t version;           /* BCD BIOS version, e.g. 0x0300 => 3.0 */
+    uint32_t oem_string_ptr;    /* Far pointer to OEM string */
+    uint32_t capabilities;      /* Capabilities of graphics controller */
+    uint32_t video_mode_ptr;    /* Far pointer to list of supported modes */
+    uint16_t total_memory;      /* Number of 64-KiB blocks of memory */
+    /* Remaining fields are unused in this kernel. */
+} __attribute__((packed)) vbe_controller_info_t;
+
 void vbe_init(struct multiboot2_tag_vbe* vbe_tag);
 vbe_mode_info_t* vbe_get_mode_info(uint16_t mode);
+const vbe_controller_info_t* vbe_get_controller_info(void);
+const uint16_t* vbe_get_mode_list(void);
 void vbe_set_mode(uint16_t mode);
+
+// Convenience: set mode by explicit WxHxbpp using Bochs/QEMU DISPI if available.
+// Returns true on success.
+bool vbe_set_mode_lfb(uint16_t width, uint16_t height, uint16_t bpp);
+
 
 #endif // VBE_H 

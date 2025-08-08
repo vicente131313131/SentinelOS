@@ -1,3 +1,4 @@
+/* pic.c – 8259A PIC remapping and masking helpers */
 #include <stdint.h>
 #include "pic.h"
 #include "io.h"
@@ -12,6 +13,7 @@
 #define ICW1_ICW4       0x01
 #define ICW4_8086       0x01
 
+/* Remap master/slave PICs to vectors 0x20-0x2F to avoid CPU exception range. */
 void pic_remap() {
     outb(PIC1_COMMAND, ICW1_INIT | ICW1_ICW4);
     outb(PIC2_COMMAND, ICW1_INIT | ICW1_ICW4);
@@ -25,18 +27,21 @@ void pic_remap() {
     outb(PIC2_DATA, 0);
 }
 
+/* Convenience: unmask keyboard IRQ (IRQ1). */
 void pic_unmask_irq1() {
     uint8_t mask = inb(PIC1_DATA);
     mask &= ~(1 << 1); // Clear bit 1 to unmask IRQ1 (keyboard)
     outb(PIC1_DATA, mask);
 }
 
+/* Send End-Of-Interrupt (EOI) to PIC(s). */
 void pic_send_eoi(unsigned char irq) {
     if(irq >= 8)
         outb(PIC2_COMMAND, 0x20);
     outb(PIC1_COMMAND, 0x20);
 }
 
+/* Mask (disable) a specific IRQ line. */
 void pic_mask_irq(unsigned char irq) {
     uint16_t port;
     uint8_t value;
@@ -51,6 +56,7 @@ void pic_mask_irq(unsigned char irq) {
     outb(port, value);
 }
 
+/* Unmask (enable) a specific IRQ line. */
 void pic_unmask_irq(unsigned char irq) {
     uint16_t port;
     uint8_t value;

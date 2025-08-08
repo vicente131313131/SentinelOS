@@ -1,3 +1,4 @@
+/* initrd.c – Parse a simple tar-based initial RAM disk into a VFS tree */
 #include "initrd.h"
 #include "vfs.h"
 #include "string.h"
@@ -15,6 +16,7 @@ struct vfs_node* create_initrd(struct vfs_node* parent, char* name, uint32_t fla
 int delete_initrd(struct vfs_node* parent, char* name);
 
 // Function to get the size of a file from the tar header
+/* Read octal ASCII size from tar header field. */
 unsigned int get_size(const char *in) {
     unsigned int size = 0;
     unsigned int j;
@@ -28,6 +30,7 @@ unsigned int get_size(const char *in) {
 }
 
 // Read function for initrd files
+/* Backend read for initrd file nodes – memcpy from embedded image. */
 size_t initrd_read(struct vfs_node* node, size_t offset, size_t size, uint8_t* buffer) {
     if (offset > node->length) return 0;
     if (offset + size > node->length) size = node->length - offset;
@@ -36,6 +39,7 @@ size_t initrd_read(struct vfs_node* node, size_t offset, size_t size, uint8_t* b
 }
 
 // Find a file in a directory
+/* Directory lookup among children by name. */
 struct vfs_node* finddir_initrd(struct vfs_node* node, char* name) {
     if (!(node->flags & VFS_DIRECTORY)) return NULL;
     
@@ -50,6 +54,7 @@ struct vfs_node* finddir_initrd(struct vfs_node* node, char* name) {
 }
 
 // Read a directory entry
+/* Readdir implementation returning one entry at a time. */
 struct dirent* readdir_initrd(struct vfs_node* node, uint32_t index) {
     if (!(node->flags & VFS_DIRECTORY)) return NULL;
 
@@ -67,6 +72,7 @@ struct dirent* readdir_initrd(struct vfs_node* node, uint32_t index) {
     return NULL;
 }
 
+/* Create a child node under parent (file or directory). */
 struct vfs_node* create_initrd(struct vfs_node* parent, char* name, uint32_t flags) {
     if (!(parent->flags & VFS_DIRECTORY)) return NULL;
     if (n_nodes >= MAX_FILES) return NULL;
@@ -94,6 +100,7 @@ struct vfs_node* create_initrd(struct vfs_node* parent, char* name, uint32_t fla
     return new_node;
 }
 
+/* Remove a child node by name (simple unlink; memory not reclaimed). */
 int delete_initrd(struct vfs_node* parent, char* name) {
     if (!(parent->flags & VFS_DIRECTORY)) return -1;
 
@@ -118,6 +125,7 @@ int delete_initrd(struct vfs_node* parent, char* name) {
 }
 
 // Helper to get/create a node for a given path
+/* Ensure the directory path exists under root; return the deepest node. */
 static struct vfs_node* get_or_create_node_from_path(struct vfs_node* root, const char* path) {
     char* p = (char*)path;
     char* q;
@@ -147,6 +155,7 @@ static struct vfs_node* get_or_create_node_from_path(struct vfs_node* root, cons
 }
 
 // Initialize the initrd and build the VFS tree
+/* Build the VFS tree by scanning the tar archive at `location`. */
 struct vfs_node* initrd_init(uintptr_t location) {
     uintptr_t current_location = location;
     n_nodes = 0; // Reset node count

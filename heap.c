@@ -1,8 +1,25 @@
+/*
+ * heap.c
+ * -----------------
+ * A tiny kernel heap built on top of the page allocator (PMM).
+ *
+ * Design
+ * - Classic K&R free-list allocator using a singly-linked circular list of
+ *   blocks. Each allocated block is preceded by a header describing its size.
+ * - When space is needed, we request another page from the PMM (morecore).
+ * - Free coalesces with adjacent free blocks to limit fragmentation.
+ *
+ * Notes
+ * - Simple, not thread-safe. Suitable for early kernel boot / single core.
+ * - Alignment is pointer-aligned via header sizing; extend if you need stricter
+ *   alignment requirements for DMA or SIMD.
+ */
 #include "heap.h"
 #include "pmm.h"
 #include "serial.h"
 #include <stddef.h>
 
+/* Allocation header stored immediately before each user block. */
 typedef struct header {
     struct header *next;
     size_t size;
@@ -12,6 +29,7 @@ static header_t base;
 static header_t *free_list = NULL;
 static size_t heap_total_size = 0;
 
+/* Ask the PMM for at least one page and add it to the free list. */
 static header_t* morecore(size_t num_units) {
     char *cp;
     header_t *up;
@@ -34,6 +52,7 @@ static header_t* morecore(size_t num_units) {
     return free_list;
 }
 
+/* Initialize the heap free-list with a dummy base node and grow once. */
 void heap_init() {
     base.next = &base;
     base.size = 0;
@@ -42,6 +61,7 @@ void heap_init() {
     serial_writestring("[Serial] Kernel heap initialized.\n");
 }
 
+/* Allocate at least nbytes and return a pointer to usable memory. */
 void* kmalloc(size_t nbytes) {
     header_t *p, *prevp;
     size_t nunits;
@@ -71,6 +91,7 @@ void* kmalloc(size_t nbytes) {
     }
 }
 
+/* Free a block previously returned by kmalloc(). */
 void kfree(void* ptr) {
     if (ptr == NULL) {
         return;
@@ -102,6 +123,7 @@ void kfree(void* ptr) {
     free_list = p;
 }
 
+/* Report heap accounting stats (approximate). */
 void heap_get_info(heap_info_t* info) {
     if (!info) return;
 

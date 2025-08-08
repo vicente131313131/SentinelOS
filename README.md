@@ -16,7 +16,6 @@ SentinelOS is a 64-bit hobby project operating system. The project is implemente
   * `help`, `clear`, `info`, `sent`, `ls`, `cat`, `mkdir`, `touch`, `rm`, `cd`, `pwd`, `meminfo`, `heapinfo`, `vbeinfo`.
 * PS/2 keyboard and mouse drivers.
 
-Upcoming milestones include an ELF user-space loader, AHCI/NVMe driver, pre-emptive multitasking and a minimal TCP/IP stack.
 
 ---
 
@@ -67,8 +66,6 @@ Parameter summary
 | `-serial stdio` | Redirect COM1 to the host terminal |
 | `-vga std` | 32-bit colour framebuffer compatible with SpringIntoView |
 
-For physical hardware the ISO is El-Torito/MBR hybrid; it can be flashed with standard imaging utilities (Balena Etcher, `dd`, Rufus). **Note:** Real-hardware support is experimental.
-
 ---
 
 ## 5. Command Reference
@@ -89,3 +86,7 @@ For physical hardware the ISO is El-Torito/MBR hybrid; it can be flashed with st
 | `vbeinfo` | VESA framebuffer mode information |
 
 ---
+
+## 6. License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.

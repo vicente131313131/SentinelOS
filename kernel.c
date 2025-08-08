@@ -381,11 +381,10 @@ void shell_handle_command(const char* cmd) {
     } else if (strcmp(cmd, "clear") == 0) {
         shell_clear();
     } else if (strcmp(cmd, "sent") == 0) {
-        terminal_writestring(" ____  _____ _   _ _____ ___ _   _ _____ _     \n");
-        terminal_writestring("/ ___|| ____| \\ | |_   _|_ _| \\ | | ____| |    \n");
-        terminal_writestring("\\___ \\|  _| |  \\| | | |  | ||  \\| |  _| | |    \n");
-        terminal_writestring(" ___) | |___| |\\  | | |  | || |\\  | |___| |___ \n");
-        terminal_writestring("|____/|_____|_| \\_| |_| |___|_| \\_|_____|_____|\n");
+        terminal_writestring("▗▄▄▖▗▄▄▄▖▗▖  ▗▖▗▄▄▄▖▗▄▄▄▖▗▖  ▗▖▗▄▄▄▖▗▖    ▗▄▖  ▗▄▄▖\n");
+        terminal_writestring("▐▌   ▐▌   ▐▛▚▖▐▌  █    █  ▐▛▚▖▐▌▐▌   ▐▌   ▐▌ ▐▌▐▌   \n");
+        terminal_writestring(" ▝▀▚▖▐▛▀▀▘▐▌ ▝▜▌  █    █  ▐▌ ▝▜▌▐▛▀▀▘▐▌   ▐▌ ▐▌ ▝▀▚▖ \n");
+        terminal_writestring("▗▄▄▞▘▐▙▄▄▖▐▌  ▐▌  █  ▗▄█▄▖▐▌  ▐▌▐▙▄▄▖▐▙▄▄▖▝▚▄▞▘▗▄▄▞▘\n");
         terminal_writestring("\n");
         uint8_t original_color = terminal_color;
         for (uint8_t i = 0; i < 16; i++) {

@@ -42,7 +42,6 @@ unsigned char* siv_get_char_bitmap(char c, float scale, int* width, int* height,
 void siv_free_char_bitmap(unsigned char* bitmap);
 
 void siv_get_screen_size(uint32_t* width, uint32_t* height);
-void siv_draw_cursor(int x, int y, uint32_t color);
 void siv_clear(uint32_t color);
 uint32_t siv_get_pixel(int x, int y);
 

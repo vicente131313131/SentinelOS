@@ -50,11 +50,7 @@ The build generates `sentinelos.iso` in the project root.
 ## 4. Running under QEMU
 
 ```bash
-$ qemu-system-x86_64 \
-    -cdrom sentinelos.iso \
-    -m 256M \
-    -serial stdio \
-    -vga std
+$ qemu-system-x86_64 -cdrom sentinelos.iso -m 256M -serial stdio -vga std
 ```
 
 Parameter summary
@@ -87,6 +83,10 @@ Parameter summary
 
 ---
 
-## 6. License
+## 6. Libraries
+
+- **stb_truetype.h** - Public domain font rendering library
+
+## 7. License
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.

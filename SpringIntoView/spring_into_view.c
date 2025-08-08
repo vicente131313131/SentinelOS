@@ -152,35 +152,7 @@ void siv_clear(uint32_t color) {
     }
 }
 
-void siv_draw_cursor(int x, int y, uint32_t color) {
-    // A simple cursor shape, Not used was for a "Desktop"
-    const char* cursor_map[] = {
-        "X           ",
-        "XX          ",
-        "XXX         ",
-        "XXXX        ",
-        "XXXXX       ",
-        "XXXXXX      ",
-        "XXX.XX      ",
-        "XX..XX      ",
-        "X...XX      ",
-        " ...XX      ",
-        "  ..X       ",
-        "   .        ",
-    };
-    
-    uint32_t outline_color = 0x000000;
-
-    for (int i = 0; i < 12; ++i) {
-        for (int j = 0; j < 12; ++j) {
-            if (cursor_map[i][j] == 'X') {
-                siv_put_pixel(x + j, y + i, color);
-            } else if (cursor_map[i][j] == '.') {
-                 siv_put_pixel(x + j, y + i, outline_color);
-            }
-        }
-    }
-}
+// Removed desktop cursor rendering
 
 void siv_draw_line(int x0, int y0, int x1, int y1, uint32_t color) {
     int dx = siv_abs(x1 - x0), sx = x0 < x1 ? 1 : -1;

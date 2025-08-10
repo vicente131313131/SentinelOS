@@ -39,17 +39,27 @@ struct multiboot2_tag_framebuffer *find_framebuffer_tag(struct multiboot2_info *
 }
 
 struct multiboot2_tag_module *find_module_tag(struct multiboot2_info *mbi, const char* name) {
+    struct multiboot2_tag_module* first_module = NULL;
     for (struct multiboot2_tag *tag = (struct multiboot2_tag *)((uint8_t*)mbi + 8);
          tag->type != MULTIBOOT2_TAG_TYPE_END;
          tag = (struct multiboot2_tag *)((uint8_t *)tag + ((tag->size + 7) & ~7))) {
         if (tag->type == MULTIBOOT2_TAG_TYPE_MODULE) {
             struct multiboot2_tag_module *mod = (struct multiboot2_tag_module *)tag;
-            if (strcmp(mod->cmdline, name) == 0) {
-                return mod;
+            if (!first_module) first_module = mod;
+            const char* cmd = mod->cmdline;
+            // Accept both exact name and basename match (e.g., "/boot/initrd.tar").
+            // Note: Some GRUB configs leave cmdline empty; we handle that by falling back below.
+            if (name && name[0]) {
+                const char* base = strrchr(cmd, '/');
+                base = base ? (base + 1) : cmd;
+                if ((cmd && strcmp(cmd, name) == 0) || (base && strcmp(base, name) == 0)) {
+                    return mod;
+                }
             }
         }
     }
-    return NULL;
+    // Fallback: return the first module if no named match was found
+    return first_module;
 }
 
 struct multiboot2_tag_mmap *find_mmap_tag(struct multiboot2_info *mbi) {
@@ -139,6 +149,7 @@ void terminal_scroll(void);
 void terminal_putchar(char c);
 void terminal_write(const char* data, size_t size);
 void terminal_writestring(const char* data);
+void terminal_writestring_utf8(const char* data);
 void get_cwd_path(char* buffer, size_t size);
 void shell_prompt();
 void shell_clear();
@@ -190,7 +201,7 @@ static void shell_redraw_line_with_selection(void) {
 // Supported shell commands for autocomplete
 static const char* SHELL_COMMANDS[] = {
     "help", "clear", "echo", "info", "graphics", "ls", "cat", "touch", "rm",
-    "mkdir", "cd", "pwd", "meminfo", "heapinfo", "sent", "vbeinfo", "vbeset"
+    "mkdir", "cd", "pwd", "meminfo", "heapinfo", "vbeinfo", "savefs"
 };
 static const size_t NUM_SHELL_COMMANDS = sizeof(SHELL_COMMANDS) / sizeof(SHELL_COMMANDS[0]);
 
@@ -312,10 +323,73 @@ void terminal_write(const char* data, size_t size) {
     }
 }
 
-// Function to write a null-terminated string
+// Function to write a null-terminated string (raw bytes)
 void terminal_writestring(const char* data) {
     for (size_t i = 0; data[i] != '\0'; i++) {
         terminal_putchar(data[i]);
+    }
+}
+
+// UTF-8 -> CP437 best-effort printer for common Latin-1 accents
+static unsigned char cp437_from_unicode(int cp)
+{
+    switch (cp) {
+        case 0x00E1: return (unsigned char)0xA0; // á
+        case 0x00E9: return (unsigned char)0x82; // é
+        case 0x00ED: return (unsigned char)0xA1; // í
+        case 0x00F3: return (unsigned char)0xA2; // ó
+        case 0x00FA: return (unsigned char)0xA3; // ú
+        case 0x00F1: return (unsigned char)0xA4; // ñ
+        case 0x00FC: return (unsigned char)0x81; // ü
+        case 0x00C1: return (unsigned char)0xB5; // Á
+        case 0x00C9: return (unsigned char)0x90; // É
+        case 0x00CD: return (unsigned char)0xD6; // Í
+        case 0x00D3: return (unsigned char)0xE0; // Ó
+        case 0x00DA: return (unsigned char)0xE9; // Ú
+        case 0x00D1: return (unsigned char)0xA5; // Ñ
+        case 0x00DC: return (unsigned char)0x9A; // Ü
+        case 0x00BF: return (unsigned char)0xA8; // ¿
+        case 0x00A1: return (unsigned char)0xAD; // ¡
+        default: return '?';
+    }
+}
+
+static int utf8_decode_advance_tm(const char** p)
+{
+    const unsigned char* s = (const unsigned char*)(*p);
+    if (!s || *s == 0) return -1;
+    unsigned char b0 = s[0];
+    if (b0 < 0x80) { (*p) += 1; return b0; }
+    if ((b0 & 0xE0) == 0xC0) {
+        unsigned char b1 = s[1]; if ((b1 & 0xC0) != 0x80) { (*p)+=1; return 0xFFFD; }
+        int cp = ((int)(b0 & 0x1F) << 6) | (int)(b1 & 0x3F);
+        if (cp < 0x80) cp = 0xFFFD; (*p)+=2; return cp;
+    }
+    if ((b0 & 0xF0) == 0xE0) {
+        unsigned char b1 = s[1], b2 = s[2]; if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) { (*p)+=1; return 0xFFFD; }
+        int cp = ((int)(b0 & 0x0F) << 12) | ((int)(b1 & 0x3F) << 6) | (int)(b2 & 0x3F);
+        if (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD; (*p)+=3; return cp;
+    }
+    if ((b0 & 0xF8) == 0xF0) {
+        unsigned char b1 = s[1], b2 = s[2], b3 = s[3]; if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80) { (*p)+=1; return 0xFFFD; }
+        int cp = ((int)(b0 & 0x07) << 18) | ((int)(b1 & 0x3F) << 12) | ((int)(b2 & 0x3F) << 6) | (int)(b3 & 0x3F);
+        if (cp < 0x10000 || cp > 0x10FFFF) cp = 0xFFFD; (*p)+=4; return cp;
+    }
+    (*p)+=1; return 0xFFFD;
+}
+
+void terminal_writestring_utf8(const char* data)
+{
+    const char* p = data;
+    while (1) {
+        int cp = utf8_decode_advance_tm(&p);
+        if (cp < 0) break;
+        if (cp < 0x80) {
+            terminal_putchar((char)cp);
+        } else {
+            unsigned char ch = cp437_from_unicode(cp);
+            terminal_putchar((char)ch);
+        }
     }
 }
 
@@ -375,35 +449,18 @@ void shell_handle_command(const char* cmd) {
         terminal_writestring(" - pwd: Print working directory\n");
         terminal_writestring(" - meminfo: Show memory info\n");
         terminal_writestring(" - heapinfo: Show heap info\n");
-        terminal_writestring(" - sent: Display beautiful ASCII art\n");
         terminal_writestring(" - vbeinfo: Show VBE info\n");
-        terminal_writestring(" - vbeset <WxHxbpp>: Set Bochs/QEMU VBE mode (e.g., vbeset 1280x720x32)\n");
+        terminal_writestring(" - savefs: Dump current VFS as a tar stream over serial\n");
+        // vbeset is disabled while under development
     } else if (strcmp(cmd, "clear") == 0) {
         shell_clear();
-    } else if (strcmp(cmd, "sent") == 0) {
-        terminal_writestring("▗▄▄▖▗▄▄▄▖▗▖  ▗▖▗▄▄▄▖▗▄▄▄▖▗▖  ▗▖▗▄▄▄▖▗▖    ▗▄▖  ▗▄▄▖\n");
-        terminal_writestring("▐▌   ▐▌   ▐▛▚▖▐▌  █    █  ▐▛▚▖▐▌▐▌   ▐▌   ▐▌ ▐▌▐▌   \n");
-        terminal_writestring(" ▝▀▚▖▐▛▀▀▘▐▌ ▝▜▌  █    █  ▐▌ ▝▜▌▐▛▀▀▘▐▌   ▐▌ ▐▌ ▝▀▚▖ \n");
-        terminal_writestring("▗▄▄▞▘▐▙▄▄▖▐▌  ▐▌  █  ▗▄█▄▖▐▌  ▐▌▐▙▄▄▖▐▙▄▄▖▝▚▄▞▘▗▄▄▞▘\n");
-        terminal_writestring("\n");
-        uint8_t original_color = terminal_color;
-        for (uint8_t i = 0; i < 16; i++) {
-            terminal_set_color(VGA_LIGHT_GREY | (i << 4));
-            terminal_writestring("  ");
-        }
-        terminal_writestring("\n");
-        for (uint8_t i = 0; i < 16; i++) {
-            terminal_set_color(i | (VGA_BLACK << 4));
-            terminal_writestring("Aa");
-        }
-        terminal_set_color(original_color);
-        terminal_writestring("\n");
+        // removed 'sent' command
     } else if (strncmp(cmd, "echo ", 5) == 0) {
         terminal_writestring(cmd + 5);
         terminal_writestring("\n");
     } else if (strcmp(cmd, "ls") == 0 || strncmp(cmd, "ls ", 3) == 0) {
-        const char* path = (strcmp(cmd, "ls") == 0) ? "" : cmd + 3;
-        struct vfs_node* node_to_ls = (*path) ? vfs_path_lookup(cwd, path) : cwd;
+        const char* path = (strcmp(cmd, "ls") == 0) ? "." : cmd + 3;
+        struct vfs_node* node_to_ls = vfs_path_lookup(cwd, path);
         
         if (node_to_ls && (node_to_ls->flags & VFS_DIRECTORY)) {
             struct dirent* de;
@@ -449,7 +506,7 @@ void shell_handle_command(const char* cmd) {
             }
         }
         
-        if (parent_node) {
+        if (parent_node && (parent_node->flags & VFS_DIRECTORY)) {
             struct vfs_node* new_file = vfs_create(parent_node, basename, VFS_FILE);
             if (!new_file) {
                 terminal_writestring("Failed to create file.\n");
@@ -476,7 +533,7 @@ void shell_handle_command(const char* cmd) {
             }
         }
         
-        if (parent_node) {
+        if (parent_node && (parent_node->flags & VFS_DIRECTORY)) {
             if (vfs_delete(parent_node, basename) != 0) {
                 terminal_writestring("Failed to delete file.\n");
             }
@@ -484,58 +541,100 @@ void shell_handle_command(const char* cmd) {
             terminal_writestring("rm: path not found.\n");
         }
     } else if (strcmp(cmd, "info") == 0) {
-        uint8_t prev_color = terminal_color;
-        const char* banner[] = {
-"  ____            _        _        ___   ___  ",
-" |  _ \\ ___  ___ | |_ __ _| |_ ___ / _ \\ / _ \\ ",
-" | |_) / _ \\/ _ \\| __/ _` | __/ _ \\ | | | | | |",
-" |  _ <  __/ (_) | || (_| | ||  __/ |_| | |_| |",
-" |_| \\___|\\___/ \\__\\__,_|\\__\\___|\\___/ \\___/ ",
-NULL};
-        terminal_set_color(VGA_LIGHT_CYAN | VGA_BLACK << 4);
-        for (int i = 0; banner[i]; ++i) {
-            terminal_writestring(banner[i]);
-            terminal_writestring("\n");
-        }
-
-        // Display VGA colour palette
-        terminal_writestring("\n");
-        for (int c = 0; c < 16; ++c) {
-            uint8_t colour = (c & 0x0F) | ((c & 0x0F) << 4); // FG=BG=c
-            terminal_set_color(colour);
-            terminal_putchar(219); // 0xDB full block in CP-437
-            terminal_putchar(219);
-        }
-        terminal_writestring("\n\n");
-
-        terminal_set_color(prev_color);
-        terminal_writestring("SentinelOS v0.2 Pre-Alpha by Vicente Velasquez, Last updated: 2025 June 12th\n");
+        terminal_writestring_utf8("SentinelOS by Vicente Velásquez\n");
     } else if (strcmp(cmd, "graphics") == 0) {
         terminal_writestring("Graphics mode is only available at boot.\n");
-    } else if (strncmp(cmd, "vbeset ", 7) == 0) {
-        const char* arg = cmd + 7;
-        // Parse WxHxbpp
-        uint32_t w = 0, h = 0, b = 0;
-        const char* p = arg;
-        while (*p >= '0' && *p <= '9') { w = w*10 + (*p - '0'); p++; }
-        if (*p == 'x') p++; else { terminal_writestring("Usage: vbeset <WxHxbpp>\n"); goto after_cmd; }
-        while (*p >= '0' && *p <= '9') { h = h*10 + (*p - '0'); p++; }
-        if (*p == 'x') p++; else { terminal_writestring("Usage: vbeset <WxHxbpp>\n"); goto after_cmd; }
-        while (*p >= '0' && *p <= '9') { b = b*10 + (*p - '0'); p++; }
-        if (w == 0 || h == 0 || (b != 24 && b != 32)) { terminal_writestring("Invalid mode. Use bpp 24 or 32.\n"); goto after_cmd; }
-
-        if (vbe_set_mode_lfb((uint16_t)w, (uint16_t)h, (uint16_t)b)) {
-            // Re-initialize graphics using DISPI parameters directly
-            init_graphics_bochs_runtime();
-            if (1 /* graphics initialized */) {
-                draw_progress_bar_background();
-                update_progress_bar(0, "Graphics re-initialized after mode set.");
-                siv_draw_text(10, 10, "Console switched to graphics mode.", 1.0f, 0xFFFFFFFF);
-            }
-        } else {
-            terminal_writestring("Failed to set mode (DISPI not available or rejected).\n");
-        }
+    } else if (strncmp(cmd, "vbeset", 6) == 0) {
+        terminal_writestring("vbeset is currently disabled (WIP).\n");
         goto after_cmd;
+    } else if (strcmp(cmd, "savefs") == 0) {
+        // Stream a minimal ustar tar over serial of the current VFS
+        // Only regular files and directories with simple names (<= 100)
+        void tar_write_padding(size_t n) {
+            while (n--) serial_write('\0');
+        }
+        void tar_write_octal(char* dst, size_t size, size_t value) {
+            // size includes trailing NUL; pad with leading zeros
+            for (int i = (int)size - 2; i >= 0; --i) { dst[i] = '0' + (value % 8); value /= 8; }
+            dst[size - 1] = '\0';
+        }
+        void tar_write_header(const char* name, size_t size, char typeflag) {
+            char hdr[512];
+            memset(hdr, 0, sizeof(hdr));
+            // name
+            size_t namelen = strlen(name);
+            if (namelen > 100) namelen = 100; // truncate
+            memcpy(hdr + 0, name, namelen);
+            // mode, uid, gid
+            tar_write_octal(hdr + 100, 8, 0644);
+            tar_write_octal(hdr + 108, 8, 0);
+            tar_write_octal(hdr + 116, 8, 0);
+            // size
+            tar_write_octal(hdr + 124, 12, (typeflag == '0') ? size : 0);
+            // mtime
+            tar_write_octal(hdr + 136, 12, 0);
+            // chksum field initially spaces
+            memset(hdr + 148, ' ', 8);
+            hdr[156] = typeflag; // typeflag
+            memcpy(hdr + 257, "ustar\0", 6);
+            memcpy(hdr + 263, "00", 2);
+            // checksum
+            unsigned int sum = 0;
+            for (int i = 0; i < 512; ++i) sum += (unsigned char)hdr[i];
+            tar_write_octal(hdr + 148, 8, sum);
+            for (int i = 0; i < 512; ++i) serial_write(hdr[i]);
+        }
+        void tar_dump_node(struct vfs_node* node, const char* path_prefix) {
+            char path[256];
+            // Build path
+            if (path_prefix[0] == '\0' || (path_prefix[0] == '/' && path_prefix[1] == '\0')) {
+                // root prefix
+                if (strcmp(node->name, "/") == 0) {
+                    // Emit root directory as "." entry
+                    tar_write_header(".", 0, '5');
+                } else {
+                    strcpy(path, node->name);
+                    tar_write_header(path, 0, (node->flags & VFS_DIRECTORY) ? '5' : '0');
+                }
+            } else {
+                strcpy(path, path_prefix);
+                size_t n = strlen(path);
+                if (n > 0 && path[n-1] != '/') strcat(path, "/");
+                strcat(path, node->name);
+                tar_write_header(path, (node->flags & VFS_DIRECTORY) ? 0 : node->length, (node->flags & VFS_DIRECTORY) ? '5' : '0');
+            }
+
+            if (node->flags & VFS_FILE) {
+                // Write file data in 512-byte blocks
+                size_t remaining = node->length;
+                size_t offset = 0;
+                char block[512];
+                while (remaining > 0) {
+                    size_t chunk = remaining > 512 ? 512 : remaining;
+                    memset(block, 0, sizeof(block));
+                    vfs_read(node, offset, chunk, (uint8_t*)block);
+                    for (size_t i = 0; i < 512; ++i) serial_write(block[i]);
+                    offset += chunk;
+                    remaining -= chunk;
+                }
+            }
+
+            if (node->flags & VFS_DIRECTORY) {
+                // Iterate children
+                struct vfs_node* child = node->first_child;
+                while (child) {
+                    tar_dump_node(child, (strcmp(node->name, "/") == 0) ? "/" : path);
+                    child = child->next_sibling;
+                }
+            }
+        }
+        // Kick off from root
+        if (!vfs_root) { terminal_writestring("VFS not mounted.\n"); goto after_cmd; }
+        serial_writestring("[savefs] Begin TAR on serial...\n");
+        tar_dump_node(vfs_root, "/");
+        // Two 512-byte zero blocks to end archive
+        for (int i = 0; i < 1024; ++i) serial_write('\0');
+        serial_writestring("[savefs] End TAR.\n");
     } else if (strncmp(cmd, "mkdir ", 6) == 0) {
         const char* path = cmd + 6;
         char path_buf[256];
@@ -555,7 +654,13 @@ NULL};
             }
         }
         
-        if (parent_node) {
+        if (parent_node && (parent_node->flags & VFS_DIRECTORY)) {
+            // If directory already exists, do nothing
+            extern struct vfs_node* finddir_initrd(struct vfs_node*, char*);
+            if (finddir_initrd(parent_node, basename)) {
+                terminal_writestring("Directory already exists.\n");
+                goto after_cmd;
+            }
             struct vfs_node* new_dir = vfs_create(parent_node, basename, VFS_DIRECTORY);
             if (!new_dir) {
                 terminal_writestring("Failed to create directory.\n");
@@ -924,12 +1029,19 @@ static void init_graphics_bochs_runtime(void) {
         return;
     }
 
+    // Try to set a sane default mode if current mode is unusable
     uint16_t w, h, bpp;
     bochs_vbe_get_mode(&w, &h, &bpp);
     if (w == 0 || h == 0 || (bpp != 24 && bpp != 32)) {
-        serial_writestring("[Graphics] Invalid DISPI mode parameters.\n");
-        graphics_initialized = false;
-        return;
+        // Prefer 1024x768x32; fall back to 800x600x32
+        if (!bochs_vbe_set_mode(1024, 768, 32)) {
+            if (!bochs_vbe_set_mode(800, 600, 32)) {
+                serial_writestring("[Graphics] Failed to set DISPI mode.\n");
+                graphics_initialized = false;
+                return;
+            }
+        }
+        bochs_vbe_get_mode(&w, &h, &bpp);
     }
 
     uint32_t bytes_per_pixel = bpp / 8;
@@ -958,6 +1070,7 @@ void update_progress_bar(int percentage, const char* text) {
 
 void init_graphics(struct multiboot2_tag_framebuffer* fb_tag) {
     if (fb_tag->framebuffer_type == 2) {
+        // Text framebuffer only; leave graphics disabled
         serial_writestring("Bootloader provided EGA text framebuffer. Graphics disabled.\n");
         graphics_initialized = false;
         return;
@@ -978,6 +1091,8 @@ void init_graphics(struct multiboot2_tag_framebuffer* fb_tag) {
     siv_clear(0x00112233);
     graphics_initialized = true;
 }
+
+// (removed unused is_graphics_available and render_info_banner_siv)
 
 void init_terminal() {
     terminal_initialize();

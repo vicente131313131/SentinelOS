@@ -29,6 +29,158 @@ static inline uint32_t rgb565_to_888(uint16_t c) {
     return ((uint32_t)(r << 3) << 16) | ((uint32_t)(g << 2) << 8) | (uint32_t)(b << 3);
 }
 
+// Decode one UTF-8 codepoint and advance the input pointer.
+// Returns -1 on end-of-string. Returns U+FFFD on malformed sequences.
+static inline int siv_is_cont_byte(unsigned char b)
+{
+    return (b & 0xC0) == 0x80;
+}
+
+static int siv_utf8_decode_advance(const char** text_ptr)
+{
+    const unsigned char* s = (const unsigned char*)(*text_ptr);
+    if (!s || *s == 0) {
+        return -1;
+    }
+
+    unsigned char b0 = s[0];
+    if (b0 < 0x80) {
+        // ASCII
+        (*text_ptr) += 1;
+        return (int)b0;
+    }
+
+    // 2-byte sequence: 110xxxxx 10xxxxxx
+    if ((b0 & 0xE0) == 0xC0) {
+        unsigned char b1 = s[1];
+        if (!siv_is_cont_byte(b1)) { (*text_ptr) += 1; return 0xFFFD; }
+        int cp = ((int)(b0 & 0x1F) << 6) | (int)(b1 & 0x3F);
+        // Reject overlong encodings
+        if (cp < 0x80) cp = 0xFFFD;
+        (*text_ptr) += 2;
+        return cp;
+    }
+
+    // 3-byte sequence: 1110xxxx 10xxxxxx 10xxxxxx
+    if ((b0 & 0xF0) == 0xE0) {
+        unsigned char b1 = s[1];
+        unsigned char b2 = s[2];
+        if (!siv_is_cont_byte(b1) || !siv_is_cont_byte(b2)) { (*text_ptr) += 1; return 0xFFFD; }
+        int cp = ((int)(b0 & 0x0F) << 12) | ((int)(b1 & 0x3F) << 6) | (int)(b2 & 0x3F);
+        // Reject overlong encodings and UTF-16 surrogate halves
+        if (cp < 0x800 || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
+        (*text_ptr) += 3;
+        return cp;
+    }
+
+    // 4-byte sequence: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+    if ((b0 & 0xF8) == 0xF0) {
+        unsigned char b1 = s[1];
+        unsigned char b2 = s[2];
+        unsigned char b3 = s[3];
+        if (!siv_is_cont_byte(b1) || !siv_is_cont_byte(b2) || !siv_is_cont_byte(b3)) { (*text_ptr) += 1; return 0xFFFD; }
+        int cp = ((int)(b0 & 0x07) << 18) | ((int)(b1 & 0x3F) << 12) | ((int)(b2 & 0x3F) << 6) | (int)(b3 & 0x3F);
+        // Reject overlong encodings and values beyond Unicode range
+        if (cp < 0x10000 || cp > 0x10FFFF) cp = 0xFFFD;
+        (*text_ptr) += 4;
+        return cp;
+    }
+
+    // Invalid leading byte
+    (*text_ptr) += 1;
+    return 0xFFFD;
+}
+
+static void siv_draw_codepoint(int x, int y, int codepoint, float scale, uint32_t color)
+{
+    if (!font_initialized) return;
+
+    int ascent, descent, lineGap;
+    stbtt_GetFontVMetrics(&font_info, &ascent, &descent, &lineGap);
+    float font_scale = stbtt_ScaleForPixelHeight(&font_info, 16.0f * scale);
+    ascent = (int)(ascent * font_scale);
+
+    int bitmap_w, bitmap_h, xoff, yoff;
+    unsigned char* bitmap = stbtt_GetCodepointBitmap(&font_info, font_scale, font_scale, codepoint, &bitmap_w, &bitmap_h, &xoff, &yoff);
+    if (bitmap) {
+        for (int row = 0; row < bitmap_h; ++row) {
+            for (int col = 0; col < bitmap_w; ++col) {
+                uint8_t alpha = bitmap[row * bitmap_w + col];
+                siv_put_pixel_alpha(x + xoff + col, y + ascent + yoff + row, color, alpha);
+            }
+        }
+        stbtt_FreeBitmap(bitmap, NULL);
+    }
+}
+
+static inline int siv_is_block_element(int cp)
+{
+    return (cp >= 0x2580 && cp <= 0x259F);
+}
+
+static void siv_draw_block_element(int x, int y, float scale, uint32_t color, int cp, int cell_w, int cell_h)
+{
+    // Align cell to the same baseline convention as glyph bitmaps
+    int ascent, descent, lineGap;
+    float font_scale = stbtt_ScaleForPixelHeight(&font_info, 16.0f * scale);
+    stbtt_GetFontVMetrics(&font_info, &ascent, &descent, &lineGap);
+    ascent = (int)(ascent * font_scale);
+    int top = y + ascent - cell_h;
+
+    // Common halves
+    int half_w = cell_w / 2;
+    int half_h = cell_h / 2;
+
+    // Full block
+    if (cp == 0x2588) { // █
+        if (cell_w > 0 && cell_h > 0) siv_draw_rect(x, top, cell_w, cell_h, color, true);
+        return;
+    }
+
+    // Half blocks
+    if (cp == 0x2580) { // ▀ upper half
+        if (cell_w > 0 && half_h > 0) siv_draw_rect(x, top, cell_w, half_h, color, true);
+        return;
+    }
+    if (cp == 0x2584) { // ▄ lower half
+        if (cell_w > 0 && (cell_h - half_h) > 0) siv_draw_rect(x, top + half_h, cell_w, cell_h - half_h, color, true);
+        return;
+    }
+    if (cp == 0x258C) { // ▌ left half
+        if (half_w > 0 && cell_h > 0) siv_draw_rect(x, top, half_w, cell_h, color, true);
+        return;
+    }
+    if (cp == 0x2590) { // ▐ right half
+        if ((cell_w - half_w) > 0 && cell_h > 0) siv_draw_rect(x + half_w, top, cell_w - half_w, cell_h, color, true);
+        return;
+    }
+
+    // Quadrants 0x2596..0x259F, map to a 4-bit mask: UL(1), UR(2), LL(4), LR(8)
+    int mask = 0;
+    switch (cp) {
+        case 0x2596: /* ▖ */ mask = 4; break; // LL
+        case 0x2597: /* ▗ */ mask = 8; break; // LR
+        case 0x2598: /* ▘ */ mask = 1; break; // UL
+        case 0x2599: /* ▙ */ mask = 1|4|8; break; // UL+LL+LR
+        case 0x259A: /* ▚ */ mask = 1|8; break; // UL+LR
+        case 0x259B: /* ▛ */ mask = 1|2|4; break; // UL+UR+LL
+        case 0x259C: /* ▜ */ mask = 1|2|8; break; // UL+UR+LR
+        case 0x259D: /* ▝ */ mask = 2; break; // UR
+        case 0x259E: /* ▞ */ mask = 2|4; break; // UR+LL
+        case 0x259F: /* ▟ */ mask = 2|4|8; break; // UR+LL+LR
+        default: break;
+    }
+
+    if (mask) {
+        if ((mask & 1) && half_w > 0 && half_h > 0) siv_draw_rect(x,           top,           half_w, half_h, color, true); // UL
+        if ((mask & 2) && (cell_w - half_w) > 0 && half_h > 0) siv_draw_rect(x + half_w,  top,           cell_w - half_w, half_h, color, true); // UR
+        if ((mask & 4) && half_w > 0 && (cell_h - half_h) > 0) siv_draw_rect(x,           top + half_h,  half_w, cell_h - half_h, color, true); // LL
+        if ((mask & 8) && (cell_w - half_w) > 0 && (cell_h - half_h) > 0) siv_draw_rect(x + half_w,  top + half_h,  cell_w - half_w, cell_h - half_h, color, true); // LR
+        return;
+    }
+    // Fallback: draw nothing if unknown
+}
+
 void siv_init(uint32_t width, uint32_t height, uint32_t pitch, uint32_t bpp, void* framebuffer) {
     fb = (uint32_t*)framebuffer;
     fb_width = width;
@@ -248,25 +400,8 @@ void siv_draw_circle(int xc, int yc, int r, uint32_t color, bool filled) {
 }
 
 void siv_draw_char(int x, int y, char c, float scale, uint32_t color) {
-    if (!font_initialized) return;
-
-    int ascent, descent, lineGap;
-    stbtt_GetFontVMetrics(&font_info, &ascent, &descent, &lineGap);
-    float font_scale = stbtt_ScaleForPixelHeight(&font_info, 16.0f * scale);
-    ascent = (int)(ascent * font_scale);
-
-    int bitmap_w, bitmap_h, xoff, yoff;
-    unsigned char* bitmap = siv_get_char_bitmap(c, scale, &bitmap_w, &bitmap_h, &xoff, &yoff);
-
-    if (bitmap) {
-        for (int row = 0; row < bitmap_h; ++row) {
-            for (int col = 0; col < bitmap_w; ++col) {
-                uint8_t alpha = bitmap[row * bitmap_w + col];
-                siv_put_pixel_alpha(x + xoff + col, y + ascent + yoff + row, color, alpha);
-            }
-        }
-        siv_free_char_bitmap(bitmap);
-    }
+    // Backwards-compatible ASCII path via codepoint draw
+    siv_draw_codepoint(x, y, (unsigned char)c, scale, color);
 }
 
 void siv_draw_text(int x, int y, const char* text, float scale, uint32_t color) {
@@ -275,17 +410,37 @@ void siv_draw_text(int x, int y, const char* text, float scale, uint32_t color) 
     float font_scale = stbtt_ScaleForPixelHeight(&font_info, 16.0f * scale);
     int current_x = x;
 
-    while (*text) {
-        siv_draw_char(current_x, y, *text, scale, color);
-        
+    const char* p = text;
+    int prev_cp = -1;
+    while (1) {
+        int cp = siv_utf8_decode_advance(&p);
+        if (cp < 0) break;
+        // Prefer font glyph; if it's a block element, synthesize bitmap for consistent look
+        if (siv_is_block_element(cp)) {
+            int ascent, descent, lineGap;
+            stbtt_GetFontVMetrics(&font_info, &ascent, &descent, &lineGap);
+            int cell_h = (int)((ascent - descent) * font_scale);
+            // Approximate cell width using 'M' advance as monospace-ish cell
+            int adv, lsb;
+            stbtt_GetCodepointHMetrics(&font_info, 'M', &adv, &lsb);
+            int cell_w = (int)(adv * font_scale);
+            if (cell_w <= 0) cell_w = (int)(16.0f * scale);
+            if (cell_h <= 0) cell_h = (int)(16.0f * scale);
+            siv_draw_block_element(current_x, y, scale, color, cp, cell_w, cell_h);
+        } else {
+            // Render this codepoint via font
+            siv_draw_codepoint(current_x, y, cp, scale, color);
+        }
+
+        // Advance by glyph metrics
         int advanceWidth, leftSideBearing;
-        stbtt_GetCodepointHMetrics(&font_info, *text, &advanceWidth, &leftSideBearing);
+        stbtt_GetCodepointHMetrics(&font_info, cp, &advanceWidth, &leftSideBearing);
         current_x += (int)(advanceWidth * font_scale);
 
-        if (*(text + 1)) {
-            current_x += (int)(stbtt_GetCodepointKernAdvance(&font_info, *text, *(text + 1)) * font_scale);
+        if (prev_cp >= 0) {
+            current_x += (int)(stbtt_GetCodepointKernAdvance(&font_info, prev_cp, cp) * font_scale);
         }
-        text++;
+        prev_cp = cp;
     }
 }
 
@@ -301,15 +456,18 @@ void siv_get_text_size(const char* text, float scale, int* width, int* height) {
     int ascent, descent, lineGap;
     stbtt_GetFontVMetrics(&font_info, &ascent, &descent, &lineGap);
 
-    while (*text) {
+    const char* p = text;
+    int prev_cp = -1;
+    while (1) {
+        int cp = siv_utf8_decode_advance(&p);
+        if (cp < 0) break;
         int advanceWidth, leftSideBearing;
-        stbtt_GetCodepointHMetrics(&font_info, *text, &advanceWidth, &leftSideBearing);
+        stbtt_GetCodepointHMetrics(&font_info, cp, &advanceWidth, &leftSideBearing);
         w += (int)(advanceWidth * font_scale);
-
-        if (*(text + 1)) {
-            w += (int)(stbtt_GetCodepointKernAdvance(&font_info, *text, *(text + 1)) * font_scale);
+        if (prev_cp >= 0) {
+            w += (int)(stbtt_GetCodepointKernAdvance(&font_info, prev_cp, cp) * font_scale);
         }
-        text++;
+        prev_cp = cp;
     }
 
     if (width) *width = w;
@@ -329,7 +487,7 @@ unsigned char* siv_get_char_bitmap(char c, float scale, int* width, int* height,
     if (!font_initialized) return NULL;
 
     float font_scale = stbtt_ScaleForPixelHeight(&font_info, 16.0f * scale);
-    return stbtt_GetCodepointBitmap(&font_info, font_scale, font_scale, c, width, height, xoff, yoff);
+    return stbtt_GetCodepointBitmap(&font_info, font_scale, font_scale, (unsigned char)c, width, height, xoff, yoff);
 }
 
 void siv_free_char_bitmap(unsigned char* bitmap) {

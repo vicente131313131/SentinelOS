@@ -13,7 +13,7 @@ SentinelOS is a 64-bit hobby project operating system. The project is implemente
 * Bitmap-based Physical Memory Manager (PMM) and free-list Kernel Heap allocator.
 * Virtual File System (VFS) backed by an **initrd** (`initrd.tar`).
 * Shell with inline editing & command history supporting:
-  * `help`, `clear`, `info`, `sent`, `ls`, `cat`, `mkdir`, `touch`, `rm`, `cd`, `pwd`, `meminfo`, `heapinfo`, `vbeinfo`.
+* `help`, `clear`, `info`, `ls`, `cat`, `mkdir`, `touch`, `rm`, `cd`, `pwd`, `meminfo`, `heapinfo`, `vbeinfo`.
 * PS/2 keyboard and mouse drivers.
 
 
@@ -70,8 +70,7 @@ Parameter summary
 |---------|-------------|
 | `help` | List available commands |
 | `clear` | Clear screen |
-| `info` | Display project banner and version information |
-| `sent` | Demonstrate terminal colour palette |
+| `info` | Display project and version information |
 | `ls [path]` | List directory contents |
 | `cat <file>` | Show file contents |
 | `mkdir <dir>` | Create directory |

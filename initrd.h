@@ -19,4 +19,10 @@ struct tar_header {
 // Initializes the initrd and returns the root VFS node
 struct vfs_node* initrd_init(uintptr_t location);
 
+// Expose basic directory operations used by the simple initrd-backed memfs
+struct vfs_node* finddir_initrd(struct vfs_node* node, char* name);
+struct dirent* readdir_initrd(struct vfs_node* node, uint32_t index);
+struct vfs_node* create_initrd(struct vfs_node* parent, char* name, uint32_t flags);
+int delete_initrd(struct vfs_node* parent, char* name);
+
 #endif // INITRD_H 

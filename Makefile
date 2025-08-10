@@ -20,7 +20,7 @@ INITRD_SRC = fs/
 all: $(ISO)
 
 $(INITRD): $(wildcard $(INITRD_SRC)/*)
-	tar -cf $(INITRD) -C $(INITRD_SRC) .
+	COPYFILE_DISABLE=1 tar --format=ustar --no-mac-metadata --exclude 'PaxHeader*' --exclude '._*' -cf $(INITRD) -C $(INITRD_SRC) .
 
 $(BOOT): boot.asm
 	$(ASM) -f bin boot.asm -o $(BOOT)
@@ -106,7 +106,7 @@ $(ISO): $(BOOT) $(KERNEL) $(INITRD)
 	echo '  set gfxmode=1920x1080x32' >> iso/boot/grub/grub.cfg
 	echo '  set gfxpayload=keep' >> iso/boot/grub/grub.cfg
 	echo '  multiboot2 /boot/kernel.bin' >> iso/boot/grub/grub.cfg
-	echo '  module2 /boot/initrd.tar' >> iso/boot/grub/grub.cfg
+	echo '  module2 /boot/initrd.tar initrd.tar' >> iso/boot/grub/grub.cfg
 	echo '  boot' >> iso/boot/grub/grub.cfg
 	echo '}' >> iso/boot/grub/grub.cfg
 	/opt/homebrew/opt/i686-elf-grub/bin/i686-elf-grub-mkrescue -o $(ISO) iso

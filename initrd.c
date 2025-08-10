@@ -179,7 +179,7 @@ struct vfs_node* initrd_init(uintptr_t location) {
         struct tar_header *header = (struct tar_header *)current_location;
         int size = get_size(header->size);
 
-        // Filter out junk files from macOS tar
+        // Filter out macOS AppleDouble and PAX extended headers
         if (strncmp(header->name, "._", 2) != 0 && strncmp(header->name, "PaxHeader", 9) != 0 && header->name[0] != '\0') {
             
             // Get parent directory
@@ -197,10 +197,15 @@ struct vfs_node* initrd_init(uintptr_t location) {
                         create_initrd(parent, basename, VFS_DIRECTORY);
                     }
                 } else { // File
+                    // Skip AppleDouble resource forks explicitly
+                    if (strncmp(basename, "._", 2) == 0) {
+                        // skip
+                    } else {
                     struct vfs_node* new_node = create_initrd(parent, basename, VFS_FILE);
                     if (new_node) {
                         new_node->length = size;
                         new_node->ptr = (void*)(current_location + 512);
+                    }
                     }
                 }
             }

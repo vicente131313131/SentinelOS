@@ -17,7 +17,6 @@
 #include "mouse.h"
 
 #include "vbe.h"
-#include "bochs_vbe.h"
 #include "io.h"
 
 struct framebuffer_info {
@@ -164,7 +163,6 @@ void draw_progress_bar_background(void);
 void init_terminal(void);
 void terminal_writehex(uint64_t n);
 void terminal_writedec(size_t n);
-static void init_graphics_bochs_runtime(void);
 
 static void shell_redraw_line_with_selection(void) {
     // Move cursor to start of input (after prompt)
@@ -1021,42 +1019,6 @@ void draw_progress_bar_background() {
     siv_draw_rect(fb_info.width / 2 - 200, fb_info.height / 2 - 10, 400, 20, 0x00333333, true);
 }
 
-// Runtime graphics init using Bochs/QEMU DISPI after a mode change
-static void init_graphics_bochs_runtime(void) {
-    if (!bochs_vbe_is_present()) {
-        serial_writestring("[Graphics] DISPI not present; cannot init runtime graphics.\n");
-        graphics_initialized = false;
-        return;
-    }
-
-    // Try to set a sane default mode if current mode is unusable
-    uint16_t w, h, bpp;
-    bochs_vbe_get_mode(&w, &h, &bpp);
-    if (w == 0 || h == 0 || (bpp != 24 && bpp != 32)) {
-        // Prefer 1024x768x32; fall back to 800x600x32
-        if (!bochs_vbe_set_mode(1024, 768, 32)) {
-            if (!bochs_vbe_set_mode(800, 600, 32)) {
-                serial_writestring("[Graphics] Failed to set DISPI mode.\n");
-                graphics_initialized = false;
-                return;
-            }
-        }
-        bochs_vbe_get_mode(&w, &h, &bpp);
-    }
-
-    uint32_t bytes_per_pixel = bpp / 8;
-    uint32_t pitch = (uint32_t)w * bytes_per_pixel;
-    uint64_t lfb_phys = 0xE0000000ULL; // QEMU/Bochs VBE default LFB base
-    // Note: our boot code identity-maps 0..4GB using 2MB huge pages, so the LFB
-    // is already mapped. Do not attempt to remap with 4KB pages here.
-
-    siv_init(w, h, pitch, bpp, (void*)(uintptr_t)lfb_phys);
-    fb_info.width = w;
-    fb_info.height = h;
-    siv_init_font();
-    siv_clear(0x00112233);
-    graphics_initialized = true;
-}
 void update_progress_bar(int percentage, const char* text) {
     if (!graphics_initialized) return;
 

@@ -98,7 +98,7 @@ $(ISO): $(BOOT) $(KERNEL) $(INITRD)
 	cp $(BOOT) iso/boot/
 	cp $(KERNEL) iso/boot/
 	cp $(INITRD) iso/boot/
-	echo 'set timeout=1' > iso/boot/grub/grub.cfg
+	echo 'set timeout=0' > iso/boot/grub/grub.cfg
 	echo 'set default=0' >> iso/boot/grub/grub.cfg
 	echo 'terminal_output gfxterm' >> iso/boot/grub/grub.cfg
 	echo 'menuentry "SentinelOS" {' >> iso/boot/grub/grub.cfg

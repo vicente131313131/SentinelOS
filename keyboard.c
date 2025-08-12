@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "serial.h"
+#include "pic.h"
 
 
 void shell_input_char(char c);
@@ -76,11 +77,46 @@ void keyboard_handler(registers* regs) {
     keyboard_handle_scancode(scancode);
 }
 
+static inline void kb_wait_read(void) {
+    // Wait until output buffer full (bit0=1)
+    uint32_t timeout = 100000;
+    while (timeout-- && ((inb(0x64) & 1) == 0)) {}
+}
+
+static inline void kb_wait_write(void) {
+    // Wait until input buffer empty (bit1=0)
+    uint32_t timeout = 100000;
+    while (timeout-- && ((inb(0x64) & 2) != 0)) {}
+}
+
 void keyboard_init() {
-    // Clear the keyboard buffer by reading from the data port until it's empty.
-    // This discards any keypresses that happened during boot.
-    while (inb(0x64) & 1) {
-        inb(0x60);
-    }
-    serial_writestring("[Serial] Keyboard buffer cleared.\n");
-} 
+    // Flush any pending bytes
+    while (inb(0x64) & 1) { (void)inb(0x60); }
+
+    // Enable keyboard interface (0xAE)
+    kb_wait_write();
+    outb(0x64, 0xAE);
+
+    // Read command byte (0x20), set IRQ1 enable (bit0), enable keyboard clock (clear bit4)
+    kb_wait_write();
+    outb(0x64, 0x20);
+    kb_wait_read();
+    uint8_t cmd = inb(0x60);
+    cmd |= 0x01;        // Enable IRQ1
+    cmd &= ~(1 << 4);   // Enable keyboard clock
+    kb_wait_write();
+    outb(0x64, 0x60);
+    kb_wait_write();
+    outb(0x60, cmd);
+
+    // Enable keyboard scanning (0xF4)
+    kb_wait_write();
+    outb(0x60, 0xF4);
+    kb_wait_read();
+    (void)inb(0x60); // ACK 0xFA
+
+    // Unmask PIC IRQ1 (keyboard)
+    pic_unmask_irq(1);
+
+    serial_writestring("[Serial] Keyboard initialized (IRQ1 enabled).\n");
+}

@@ -18,6 +18,12 @@
 
 #include "vbe.h"
 #include "io.h"
+#include "pit.h"
+
+// Compile-time toggle for boot animation delays
+#ifndef BOOT_ANIMATION
+#define BOOT_ANIMATION 0
+#endif
 
 struct framebuffer_info {
     uint32_t width;
@@ -163,6 +169,15 @@ void draw_progress_bar_background(void);
 void init_terminal(void);
 void terminal_writehex(uint64_t n);
 void terminal_writedec(size_t n);
+
+// Boot timing (PIT-based)
+static uint64_t boot_tick_start = 0;
+
+static inline void boot_pause(int milliseconds) {
+    if (BOOT_ANIMATION) {
+        delay(milliseconds);
+    }
+}
 
 static void shell_redraw_line_with_selection(void) {
     // Move cursor to start of input (after prompt)
@@ -1096,42 +1111,62 @@ void kernel_main(uint64_t multiboot_info_addr) {
         init_graphics(fb_tag);
         draw_progress_bar_background();
         update_progress_bar(0, "Initializing...");
-        delay(500);
+        boot_pause(500);
     }
 
     idt_install();
     serial_writestring("IDT loaded\n");
     update_progress_bar(20, "GDT and IDT loaded.");
-    delay(500);
+    boot_pause(500);
 
     isr_install();
     pic_remap();
+    // Start PIT at 1000 Hz for millisecond timing and enable IRQ0
+    pit_init(1000);
+    pic_unmask_irq(0);
+    sti();
+    boot_tick_start = pit_get_ticks();
     update_progress_bar(40, "Interrupts enabled.");
-    delay(500);
+    boot_pause(500);
     
     // Find the initrd module
     struct multiboot2_tag_module *module_tag = find_module_tag(mbi, "initrd.tar");
 
     if (module_tag) {
         update_progress_bar(60, "Initrd found. Initializing...");
-        delay(500);
+        boot_pause(500);
         vfs_root = initrd_init((uintptr_t)module_tag->mod_start);
         cwd = vfs_root;
         update_progress_bar(80, "Initrd initialized.");
-        delay(500);
+        boot_pause(500);
     } else {
         serial_writestring("Initrd module not found.\n");
         vfs_root = NULL;
         cwd = NULL;
         update_progress_bar(80, "Initrd not found.");
-        delay(500);
+        boot_pause(500);
     }
 
     keyboard_init();
     mouse_init();
     
     update_progress_bar(100, "Boot complete.");
-    delay(1000);
+    // Report boot time in milliseconds over serial
+    {
+        uint64_t boot_ms = pit_get_ticks() - boot_tick_start;
+        serial_writestring("Boot Time: ");
+        // write decimal milliseconds
+        char buf[24]; int i = 0;
+        if (boot_ms == 0) { buf[i++] = '0'; }
+        else {
+            char tmp[24]; int t = 0; uint64_t v = boot_ms;
+            while (v > 0) { tmp[t++] = (char)('0' + (v % 10)); v /= 10; }
+            while (t--) buf[i++] = tmp[t];
+        }
+        buf[i++] = ' '; buf[i++] = 'm'; buf[i++] = 's'; buf[i++] = '\n'; buf[i] = '\0';
+        serial_writestring(buf);
+    }
+    boot_pause(1000);
 
     // Initialize terminal shell
     init_terminal();

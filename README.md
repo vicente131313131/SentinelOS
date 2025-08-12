@@ -13,7 +13,7 @@ SentinelOS is a 64-bit hobby project operating system. The project is implemente
 * Bitmap-based Physical Memory Manager (PMM) and free-list Kernel Heap allocator.
 * Virtual File System (VFS) backed by an **initrd** (`initrd.tar`).
 * Shell with inline editing & command history supporting:
-* `help`, `clear`, `info`, `ls`, `cat`, `mkdir`, `touch`, `rm`, `cd`, `pwd`, `meminfo`, `heapinfo`, `vbeinfo`.
+* `help`, `clear`, `info`, `ls`, `cat`, `mkdir`, `touch`, `rm`, `cd`, `pwd`, `meminfo`, `heapinfo`, `vbeinfo`, `savefs`, `beep`.
 * PS/2 keyboard and mouse drivers.
 
 
@@ -49,9 +49,17 @@ The build generates `sentinelos.iso` in the project root.
 
 ## 4. Running under QEMU
 
+Minimal run (no audio):
 ```bash
 $ qemu-system-x86_64 -cdrom sentinelos.iso -m 256M -serial stdio -vga std
 ```
+
+Enable PC speaker audio (modern QEMU, macOS CoreAudio):
+```bash
+$ qemu-system-x86_64 -cdrom sentinelos.iso -m 256M -serial stdio -vga std -audiodev coreaudio,id=ca -machine pcspk-audiodev=ca
+```
+
+If your QEMU does not support `-audiodev`/`pcspk-audiodev`, upgrade QEMU. The legacy `-soundhw pcspk` option is removed in newer versions.
 
 Parameter summary
 
@@ -79,6 +87,8 @@ Parameter summary
 | `cd <dir>` / `pwd` | Navigate virtual file system |
 | `meminfo` / `heapinfo` | Memory statistics |
 | `vbeinfo` | VESA framebuffer mode information |
+| `savefs` | Stream current VFS as a TAR archive over serial |
+| `beep [freq] [ms]` | Play PC speaker tone (defaults: 1000 Hz, 200 ms) |
 
 ---
 

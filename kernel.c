@@ -19,6 +19,7 @@
 #include "vbe.h"
 #include "io.h"
 #include "pit.h"
+#include "speaker.h"
 
 // Compile-time toggle for boot animation delays
 #ifndef BOOT_ANIMATION
@@ -214,7 +215,7 @@ static void shell_redraw_line_with_selection(void) {
 // Supported shell commands for autocomplete
 static const char* SHELL_COMMANDS[] = {
     "help", "clear", "echo", "info", "graphics", "ls", "cat", "touch", "rm",
-    "mkdir", "cd", "pwd", "meminfo", "heapinfo", "vbeinfo", "savefs"
+    "mkdir", "cd", "pwd", "meminfo", "heapinfo", "vbeinfo", "savefs", "beep"
 };
 static const size_t NUM_SHELL_COMMANDS = sizeof(SHELL_COMMANDS) / sizeof(SHELL_COMMANDS[0]);
 
@@ -464,6 +465,7 @@ void shell_handle_command(const char* cmd) {
         terminal_writestring(" - heapinfo: Show heap info\n");
         terminal_writestring(" - vbeinfo: Show VBE info\n");
         terminal_writestring(" - savefs: Dump current VFS as a tar stream over serial\n");
+        terminal_writestring(" - beep [freq] [ms]: Play PC speaker tone\n");
         // vbeset is disabled while under development
     } else if (strcmp(cmd, "clear") == 0) {
         shell_clear();
@@ -767,6 +769,27 @@ NULL};
             terminal_writestring(art[i]);
             terminal_writestring("\n");
         }
+    } else if (strncmp(cmd, "beep", 4) == 0) {
+        // Syntax: beep [freq] [ms]
+        uint32_t freq = 1000; // default 1kHz
+        uint32_t ms = 200;    // default 200ms
+        // Parse optional arguments
+        const char* p = cmd + 4;
+        while (*p == ' ') p++;
+        if (*p) {
+            // parse freq
+            uint32_t v = 0; bool any = false;
+            while (*p >= '0' && *p <= '9') { any = true; v = v * 10 + (uint32_t)(*p - '0'); p++; }
+            if (any) freq = v;
+            while (*p == ' ') p++;
+            if (*p) {
+                v = 0; any = false;
+                while (*p >= '0' && *p <= '9') { any = true; v = v * 10 + (uint32_t)(*p - '0'); p++; }
+                if (any) ms = v;
+            }
+        }
+        beep(freq, ms);
+        terminal_writestring("Beep done\n");
     } else {
         terminal_writestring("Unknown command: ");
         terminal_writestring(cmd);

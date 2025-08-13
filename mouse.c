@@ -11,11 +11,16 @@
 #define MOUSE_WRITE_CMD 0xD4
 #define MOUSE_ENABLE_PACKET_STREAMING 0xF4
 #define MOUSE_SET_DEFAULTS 0xF6
+#define MOUSE_SET_SAMPLE_RATE 0xF3
+#define MOUSE_SET_RESOLUTION  0xE8
+#define MOUSE_ENABLE_SCALING_2_1 0xE7
 #define MOUSE_ACK 0xFA
 
 static mouse_state_t mouse_state;
 static uint8_t mouse_cycle = 0;
 static int8_t mouse_byte[3];
+static int32_t mouse_max_x = 799;
+static int32_t mouse_max_y = 599;
 
 static void mouse_wait(uint8_t type) {
     uint32_t timeout = 100000;
@@ -75,13 +80,15 @@ void mouse_handler(registers *r) {
                     mouse_state.x += delta_x;
                     mouse_state.y -= delta_y;
 
-                    // Clamp to screen dimensions (will need to get these from somewhere)
-                    // For now, let's assume some large bounds.
-                    // This will be fixed when integrating with the desktop.
+                    // Simple acceleration for smoother feel
+                    if (delta_x > 1 || delta_x < -1) delta_x *= 2;
+                    if (delta_y > 1 || delta_y < -1) delta_y *= 2;
+
+                    // Clamp to configured bounds
                     if (mouse_state.x < 0) mouse_state.x = 0;
                     if (mouse_state.y < 0) mouse_state.y = 0;
-                    // if (mouse_state.x > screen_width) mouse_state.x = screen_width;
-                    // if (mouse_state.y > screen_height) mouse_state.y = screen_height;
+                    if (mouse_state.x > mouse_max_x) mouse_state.x = mouse_max_x;
+                    if (mouse_state.y > mouse_max_y) mouse_state.y = mouse_max_y;
                     break;
             }
         }
@@ -111,6 +118,11 @@ void mouse_init(void) {
     mouse_write(MOUSE_ENABLE_PACKET_STREAMING);
     mouse_read();
 
+    // Improve responsiveness: set higher sample rate, higher resolution, and 2:1 scaling
+    mouse_write(MOUSE_SET_SAMPLE_RATE); mouse_read(); mouse_write(200); mouse_read();
+    mouse_write(MOUSE_SET_RESOLUTION);  mouse_read(); mouse_write(3);   mouse_read();
+    mouse_write(MOUSE_ENABLE_SCALING_2_1); mouse_read();
+
     register_interrupt_handler(IRQ12, mouse_handler);
     pic_unmask_irq(12);
     
@@ -122,3 +134,21 @@ void mouse_init(void) {
 const mouse_state_t* mouse_get_state(void) {
     return &mouse_state;
 } 
+
+void mouse_set_bounds(int32_t max_x, int32_t max_y) {
+    if (max_x < 0) max_x = 0;
+    if (max_y < 0) max_y = 0;
+    mouse_max_x = max_x;
+    mouse_max_y = max_y;
+    if (mouse_state.x > mouse_max_x) mouse_state.x = mouse_max_x;
+    if (mouse_state.y > mouse_max_y) mouse_state.y = mouse_max_y;
+}
+
+void mouse_set_position(int32_t x, int32_t y) {
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (x > mouse_max_x) x = mouse_max_x;
+    if (y > mouse_max_y) y = mouse_max_y;
+    mouse_state.x = x;
+    mouse_state.y = y;
+}

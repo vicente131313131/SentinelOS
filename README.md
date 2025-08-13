@@ -4,6 +4,16 @@ SentinelOS is a 64-bit hobby project operating system. The project is implemente
 
 ---
 
+![SentinelOS Preview](fs/preview.png)
+
+---
+
+## Important project status notice
+
+SentinelOS previously booted into a text shell as its primary interface. It is now transitioning to a GUI-first system with a simple desktop, window, and mouse cursor. The shell still exists as a fallback, but graphics and input subsystems are under active development and may change. Expect breaking changes and UI/UX instability while this migration completes.
+
+---
+
 ## 1. Feature Overview
 
 * 64-bit long-mode kernel initialised by a Multiboot-2 compliant GRUB bootloader.
@@ -15,6 +25,7 @@ SentinelOS is a 64-bit hobby project operating system. The project is implemente
 * Shell with inline editing & command history supporting:
 * `help`, `clear`, `info`, `ls`, `cat`, `mkdir`, `touch`, `rm`, `cd`, `pwd`, `meminfo`, `heapinfo`, `vbeinfo`, `savefs`, `beep`.
 * PS/2 keyboard and mouse drivers.
+* Sound System **NEW**
 
 
 ---
@@ -49,15 +60,12 @@ The build generates `sentinelos.iso` in the project root.
 
 ## 4. Running under QEMU
 
-Minimal run (no audio):
+Starting command:
 ```bash
-$ qemu-system-x86_64 -cdrom sentinelos.iso -m 256M -serial stdio -vga std
+$ qemu-system-x86_64 -accel tcg -m 1024 -cdrom sentinelos.iso -vga virtio -display default -serial stdio
 ```
 
-Enable PC speaker audio (modern QEMU, macOS CoreAudio):
-```bash
-$ qemu-system-x86_64 -cdrom sentinelos.iso -m 256M -serial stdio -vga std -audiodev coreaudio,id=ca -machine pcspk-audiodev=ca
-```
+
 
 If your QEMU does not support `-audiodev`/`pcspk-audiodev`, upgrade QEMU. The legacy `-soundhw pcspk` option is removed in newer versions.
 
@@ -95,7 +103,13 @@ Parameter summary
 ## 6. Libraries
 
 - **stb_truetype.h** - Public domain font rendering library
+- **minimp3** - Minimalistic MP3 decoder by Lieff, used for audio playback. Licensed under CC0-1.0. See the upstream project and license: [lieff/minimp3](https://github.com/lieff/minimp3) · [CC0-1.0 text](https://github.com/lieff/minimp3?tab=CC0-1.0-1-ov-file)
 
 ## 7. License
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.
+
+This repository bundles third‑party components under their own terms:
+
+- `libs/minimp3.h`, `libs/minimp3_ex.h`: CC0-1.0 (see upstream: [lieff/minimp3](https://github.com/lieff/minimp3) · [CC0-1.0 text](https://github.com/lieff/minimp3?tab=CC0-1.0-1-ov-file)).
+- `SpringIntoView/stb_truetype_impl.c` and `libs/stb_truetype.h`: public domain (stb).

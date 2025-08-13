@@ -20,6 +20,9 @@
 #include "io.h"
 #include "pit.h"
 #include "speaker.h"
+#include "audio.h"
+#include "gui.h"
+#include "bochs_vbe.h"
 
 // Compile-time toggle for boot animation delays
 #ifndef BOOT_ANIMATION
@@ -34,58 +37,67 @@ struct framebuffer_info {
 static inline void sti() { __asm__ __volatile__ ("sti"); }
 
 struct multiboot2_tag_framebuffer *find_framebuffer_tag(struct multiboot2_info *mbi) {
-    for (struct multiboot2_tag *tag = (struct multiboot2_tag *)((uint8_t*)mbi + 8);
-         tag->type != MULTIBOOT2_TAG_TYPE_END;
+    uint8_t* start = (uint8_t*)mbi + 8;
+    uint8_t* end = (uint8_t*)mbi + mbi->total_size;
+    for (struct multiboot2_tag *tag = (struct multiboot2_tag *)start;
+         (uint8_t*)tag < end && tag->size >= 8;
          tag = (struct multiboot2_tag *)((uint8_t *)tag + ((tag->size + 7) & ~7))) {
         if (tag->type == MULTIBOOT2_TAG_TYPE_FRAMEBUFFER) {
             return (struct multiboot2_tag_framebuffer *)tag;
         }
+        if (tag->type == MULTIBOOT2_TAG_TYPE_END) break;
     }
     return NULL;
 }
 
 struct multiboot2_tag_module *find_module_tag(struct multiboot2_info *mbi, const char* name) {
     struct multiboot2_tag_module* first_module = NULL;
-    for (struct multiboot2_tag *tag = (struct multiboot2_tag *)((uint8_t*)mbi + 8);
-         tag->type != MULTIBOOT2_TAG_TYPE_END;
+    uint8_t* start = (uint8_t*)mbi + 8;
+    uint8_t* end = (uint8_t*)mbi + mbi->total_size;
+    for (struct multiboot2_tag *tag = (struct multiboot2_tag *)start;
+         (uint8_t*)tag < end && tag->size >= 8;
          tag = (struct multiboot2_tag *)((uint8_t *)tag + ((tag->size + 7) & ~7))) {
         if (tag->type == MULTIBOOT2_TAG_TYPE_MODULE) {
             struct multiboot2_tag_module *mod = (struct multiboot2_tag_module *)tag;
             if (!first_module) first_module = mod;
             const char* cmd = mod->cmdline;
-            // Accept both exact name and basename match (e.g., "/boot/initrd.tar").
-            // Note: Some GRUB configs leave cmdline empty; we handle that by falling back below.
-            if (name && name[0]) {
+            if (name && name[0] && cmd) {
                 const char* base = strrchr(cmd, '/');
                 base = base ? (base + 1) : cmd;
-                if ((cmd && strcmp(cmd, name) == 0) || (base && strcmp(base, name) == 0)) {
+                if ((strcmp(cmd, name) == 0) || (strcmp(base, name) == 0)) {
                     return mod;
                 }
             }
         }
+        if (tag->type == MULTIBOOT2_TAG_TYPE_END) break;
     }
-    // Fallback: return the first module if no named match was found
     return first_module;
 }
 
 struct multiboot2_tag_mmap *find_mmap_tag(struct multiboot2_info *mbi) {
-    for (struct multiboot2_tag *tag = (struct multiboot2_tag *)((uint8_t*)mbi + 8);
-         tag->type != MULTIBOOT2_TAG_TYPE_END;
+    uint8_t* start = (uint8_t*)mbi + 8;
+    uint8_t* end = (uint8_t*)mbi + mbi->total_size;
+    for (struct multiboot2_tag *tag = (struct multiboot2_tag *)start;
+         (uint8_t*)tag < end && tag->size >= 8;
          tag = (struct multiboot2_tag *)((uint8_t *)tag + ((tag->size + 7) & ~7))) {
         if (tag->type == MULTIBOOT2_TAG_TYPE_MMAP) {
             return (struct multiboot2_tag_mmap *)tag;
         }
+        if (tag->type == MULTIBOOT2_TAG_TYPE_END) break;
     }
     return NULL;
 }
 
 struct multiboot2_tag_vbe *find_vbe_tag(struct multiboot2_info *mbi) {
-    for (struct multiboot2_tag *tag = (struct multiboot2_tag *)((uint8_t*)mbi + 8);
-         tag->type != MULTIBOOT2_TAG_TYPE_END;
+    uint8_t* start = (uint8_t*)mbi + 8;
+    uint8_t* end = (uint8_t*)mbi + mbi->total_size;
+    for (struct multiboot2_tag *tag = (struct multiboot2_tag *)start;
+         (uint8_t*)tag < end && tag->size >= 8;
          tag = (struct multiboot2_tag *)((uint8_t *)tag + ((tag->size + 7) & ~7))) {
         if (tag->type == MULTIBOOT2_TAG_TYPE_VBE) {
             return (struct multiboot2_tag_vbe *)tag;
         }
+        if (tag->type == MULTIBOOT2_TAG_TYPE_END) break;
     }
     return NULL;
 }
@@ -215,7 +227,7 @@ static void shell_redraw_line_with_selection(void) {
 // Supported shell commands for autocomplete
 static const char* SHELL_COMMANDS[] = {
     "help", "clear", "echo", "info", "graphics", "ls", "cat", "touch", "rm",
-    "mkdir", "cd", "pwd", "meminfo", "heapinfo", "vbeinfo", "savefs", "beep"
+    "mkdir", "cd", "pwd", "meminfo", "heapinfo", "vbeinfo", "savefs", "beep", "play"
 };
 static const size_t NUM_SHELL_COMMANDS = sizeof(SHELL_COMMANDS) / sizeof(SHELL_COMMANDS[0]);
 
@@ -466,6 +478,7 @@ void shell_handle_command(const char* cmd) {
         terminal_writestring(" - vbeinfo: Show VBE info\n");
         terminal_writestring(" - savefs: Dump current VFS as a tar stream over serial\n");
         terminal_writestring(" - beep [freq] [ms]: Play PC speaker tone\n");
+        terminal_writestring(" - play <file>: Play audio file (WAV/MP3)\n");
         // vbeset is disabled while under development
     } else if (strcmp(cmd, "clear") == 0) {
         shell_clear();
@@ -790,6 +803,31 @@ NULL};
         }
         beep(freq, ms);
         terminal_writestring("Beep done\n");
+    } else if (strncmp(cmd, "play ", 5) == 0) {
+        const char* filename = cmd + 5;
+        struct vfs_node* audio_file = vfs_path_lookup(cwd, filename);
+        if (audio_file && (audio_file->flags & VFS_FILE)) {
+            terminal_writestring("Playing audio file: ");
+            terminal_writestring(filename);
+            terminal_writestring("\n");
+            
+            // Initialize audio system if not already done
+            if (!g_audio_system.initialized) {
+                if (!audio_init()) {
+                    terminal_writestring("Failed to initialize audio system\n");
+                    goto after_cmd;
+                }
+            }
+            
+            // Play the audio file
+            if (audio_play_file(audio_file)) {
+                terminal_writestring("Audio playback completed.\n");
+            } else {
+                terminal_writestring("Failed to play audio file.\n");
+            }
+        } else {
+            terminal_writestring("play: file not found or is a directory\n");
+        }
     } else {
         terminal_writestring("Unknown command: ");
         terminal_writestring(cmd);
@@ -1088,8 +1126,22 @@ void init_graphics(struct multiboot2_tag_framebuffer* fb_tag) {
     fb_info.width = fb_tag->framebuffer_width;
     fb_info.height = fb_tag->framebuffer_height;
     siv_init_font();
-    siv_clear(0x00112233);
+    siv_clear(0x0033CC99);
     graphics_initialized = true;
+
+    // Clamp mouse to actual screen bounds
+    if (fb_info.width > 0 && fb_info.height > 0) {
+        mouse_set_bounds((int32_t)fb_info.width - 1, (int32_t)fb_info.height - 1);
+    }
+    serial_writestring("[GFX] FB init: ");
+    terminal_writedec(fb_tag->framebuffer_width);
+    serial_writestring("x");
+    terminal_writedec(fb_tag->framebuffer_height);
+    serial_writestring("x");
+    terminal_writedec(fb_tag->framebuffer_bpp);
+    serial_writestring(" pitch=");
+    terminal_writedec(fb_tag->framebuffer_pitch);
+    serial_writestring("\n");
 }
 
 // (removed unused is_graphics_available and render_info_banner_siv)
@@ -1098,6 +1150,48 @@ void init_terminal() {
     terminal_initialize();
     serial_writestring("Welcome to SentinelOS!\n");
     shell_prompt();
+}
+
+static void try_graphics_from_vbe(struct multiboot2_tag_vbe* vbe_tag) {
+    if (!vbe_tag) return;
+    vbe_mode_info_t* mi = (vbe_mode_info_t*)vbe_tag->vbe_mode_info;
+    if (!mi) return;
+    size_t fb_bytes = (size_t)mi->bytes_per_scan_line * (size_t)mi->y_resolution;
+    if (!vmm_identity_map_range((uint64_t)mi->phys_base_ptr, fb_bytes, PAGE_PRESENT | PAGE_WRITABLE)) {
+        serial_writestring("VMM: Failed to map VBE framebuffer.\n");
+        return;
+    }
+    siv_init(mi->x_resolution, mi->y_resolution, mi->bytes_per_scan_line, mi->bits_per_pixel, (void*)(uintptr_t)mi->phys_base_ptr);
+    fb_info.width = mi->x_resolution;
+    fb_info.height = mi->y_resolution;
+    siv_init_font();
+    siv_clear(0x0033CC99);
+    graphics_initialized = true;
+    if (fb_info.width > 0 && fb_info.height > 0) {
+        mouse_set_bounds((int32_t)fb_info.width - 1, (int32_t)fb_info.height - 1);
+    }
+    serial_writestring("Graphics initialized from VBE mode info.\n");
+}
+
+static void try_graphics_bochs_dispi(uint16_t width, uint16_t height, uint16_t bpp) {
+    if (!bochs_vbe_is_present()) return;
+    if (!bochs_vbe_set_mode(width, height, bpp)) return;
+    // Bochs/QEMU typically maps LFB at 0xE0000000
+    uint64_t lfb_phys = 0xE0000000ULL;
+    uint32_t pitch = (uint32_t)width * (bpp / 8);
+    size_t fb_bytes = (size_t)pitch * (size_t)height;
+    if (!vmm_identity_map_range(lfb_phys, fb_bytes, PAGE_PRESENT | PAGE_WRITABLE)) {
+        serial_writestring("VMM: Failed to map Bochs LFB.\n");
+        return;
+    }
+    siv_init(width, height, pitch, bpp, (void*)(uintptr_t)lfb_phys);
+    fb_info.width = width;
+    fb_info.height = height;
+    siv_init_font();
+    siv_clear(0x0033CC99);
+    graphics_initialized = true;
+    mouse_set_bounds((int32_t)fb_info.width - 1, (int32_t)fb_info.height - 1);
+    serial_writestring("Graphics initialized via Bochs DISPI (assumed LFB @ 0xE0000000).\n");
 }
 
 void kernel_main(uint64_t multiboot_info_addr) {
@@ -1125,16 +1219,38 @@ void kernel_main(uint64_t multiboot_info_addr) {
 
     struct multiboot2_tag_framebuffer *fb_tag = find_framebuffer_tag(mbi);
     struct multiboot2_tag_vbe *vbe_tag = find_vbe_tag(mbi);
-
+    serial_writestring("[Boot] Multiboot tags scanned.\n");
+    if (fb_tag) {
+        serial_writestring("[Boot] Framebuffer tag present.\n");
+    } else {
+        serial_writestring("[Boot] No framebuffer tag.\n");
+    }
     if (vbe_tag) {
+        serial_writestring("[Boot] VBE tag present.\n");
         vbe_init(vbe_tag);
+    } else {
+        serial_writestring("[Boot] No VBE tag.\n");
     }
 
     if (fb_tag) {
         init_graphics(fb_tag);
+    }
+    if (!graphics_initialized && vbe_tag) {
+        try_graphics_from_vbe(vbe_tag);
+    }
+    if (graphics_initialized) {
         draw_progress_bar_background();
         update_progress_bar(0, "Initializing...");
         boot_pause(500);
+    }
+    if (!graphics_initialized) {
+        // Last-resort: try Bochs/QEMU DISPI with a safe mode
+        try_graphics_bochs_dispi(1024, 768, 32);
+    }
+    if (graphics_initialized) {
+        serial_writestring("[Boot] Graphics initialized.\n");
+    } else {
+        serial_writestring("[Boot] Graphics not initialized.\n");
     }
 
     idt_install();
@@ -1191,13 +1307,19 @@ void kernel_main(uint64_t multiboot_info_addr) {
     }
     boot_pause(1000);
 
-    // Initialize terminal shell
-    init_terminal();
+    // Initialize GUI first when graphics is available; else fallback to text terminal
+    if (graphics_initialized) {
+        gui_init();
+    } else {
+        init_terminal();
+        serial_writestring("Text terminal active (no framebuffer).\n");
+    }
     sti();
-    serial_writestring("Keyboard and mouse initialized, terminal activated. Interrupts unmasked.\n");
+    serial_writestring("Keyboard and mouse initialized. Interrupts unmasked.\n");
 
     // Enter idle loop
     while (1) {
+        if (gui_is_active()) gui_update();
         asm("hlt");
     }
 }

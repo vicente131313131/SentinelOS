@@ -122,6 +122,12 @@ void* pmm_alloc_page() {
             return (void*)(current_index * PAGE_SIZE);
         }
     }
+    // Fallback to bump allocator region if bitmap says OOM
+    void* fallback = pmm_alloc(PAGE_SIZE);
+    if (fallback) {
+        serial_writestring("[Serial] PMM: Bitmap OOM, using bump region.\n");
+        return fallback;
+    }
     serial_writestring("[Serial] PMM: Out of memory\n");
     return NULL; // Out of memory
 }

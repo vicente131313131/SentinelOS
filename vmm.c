@@ -64,6 +64,15 @@ bool vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
     if (!pdt) return false;
     
     if (pdt[pdt_index] & PAGE_HUGE) {
+        // If a 2MB huge page already maps this region and the caller requests
+        // an identity mapping for an address covered by that huge page, treat
+        // it as success (no-op). This avoids splitting the huge page.
+        uint64_t huge_base = pdt[pdt_index] & ADDRESS_MASK;
+        uint64_t virt_huge_base = virt_addr & ~0x1FFFFFULL; // 2MB aligned
+        if (virt_addr == phys_addr && virt_huge_base == huge_base) {
+            // Already mapped by an existing 2MB page; nothing to do.
+            return true;
+        }
         serial_writestring("VMM: Attempted to map a 4KB page where a 2MB huge page exists. This is not supported.\n");
         return false;
     }

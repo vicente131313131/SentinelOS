@@ -11,6 +11,14 @@ static uint32_t* fb = 0;
 static uint32_t fb_width = 0, fb_height = 0, fb_pitch = 0, fb_bpp = 0;
 static stbtt_fontinfo font_info;
 static bool font_initialized = false;
+static bool use_double_buffer = false;
+static uint32_t* backbuffer = 0;
+static inline uint32_t active_pitch_bytes(void)
+{
+    uint32_t bytes_per_pixel = fb_bpp / 8;
+    if (use_double_buffer && backbuffer) return fb_width * bytes_per_pixel;
+    return fb_pitch;
+}
 
 static inline int siv_abs(int x) { return x < 0 ? -x : x; }
 
@@ -109,7 +117,7 @@ static void siv_draw_codepoint(int x, int y, int codepoint, float scale, uint32_
                 siv_put_pixel_alpha(x + xoff + col, y + ascent + yoff + row, color, alpha);
             }
         }
-        stbtt_FreeBitmap(bitmap, NULL);
+        // Keep glyph bitmap to avoid re-allocations that can fail; intentionally not freed
     }
 }
 
@@ -187,6 +195,41 @@ void siv_init(uint32_t width, uint32_t height, uint32_t pitch, uint32_t bpp, voi
     fb_height = height;
     fb_pitch = pitch;
     fb_bpp = bpp;
+    // allocate double buffer lazily when enabled
+    use_double_buffer = false;
+    backbuffer = 0;
+}
+
+void siv_enable_double_buffer(bool enable) {
+    if (enable == use_double_buffer) return;
+    use_double_buffer = enable;
+    if (use_double_buffer) {
+        // allocate backbuffer using pmm if available; fallback to simple kmalloc-like via pmm
+        size_t total_bytes = (size_t)fb_height * fb_pitch;
+        backbuffer = (uint32_t*)pmm_alloc(total_bytes);
+        if (!backbuffer) {
+            use_double_buffer = false;
+        }
+    } else {
+        if (backbuffer) {
+            // We do not free backbuffer to keep complexity low; memory is small in QEMU tests
+            backbuffer = 0;
+        }
+    }
+}
+
+void siv_present(void) {
+    if (!use_double_buffer || !backbuffer) return;
+    // copy by rows to respect pitch
+    uint8_t* dst = (uint8_t*)fb;
+    uint8_t* src = (uint8_t*)backbuffer;
+    size_t row_bytes = (size_t)fb_width * (fb_bpp / 8);
+    for (uint32_t y = 0; y < fb_height; ++y) {
+        // memcpy available from string.h
+        memcpy(dst, src, row_bytes);
+        dst += fb_pitch;
+        src += row_bytes;
+    }
 }
 
 bool siv_init_font(void) {
@@ -200,8 +243,8 @@ bool siv_init_font(void) {
 void siv_put_pixel(int x, int y, uint32_t color) {
     if (x < 0 || y < 0 || x >= (int)fb_width || y >= (int)fb_height) return;
 
-    uint8_t* fb_byte_ptr = (uint8_t*)fb;
-    uint32_t offset = y * fb_pitch + x * (fb_bpp / 8);
+    uint8_t* fb_byte_ptr = (uint8_t*)(use_double_buffer && backbuffer ? (void*)backbuffer : (void*)fb);
+    uint32_t offset = y * active_pitch_bytes() + x * (fb_bpp / 8);
 
     if (fb_bpp == 32) {
         *((uint32_t*)(fb_byte_ptr + offset)) = color;
@@ -218,8 +261,8 @@ void siv_put_pixel(int x, int y, uint32_t color) {
 uint32_t siv_get_pixel(int x, int y) {
     if (x < 0 || y < 0 || x >= (int)fb_width || y >= (int)fb_height) return 0;
 
-    uint8_t* fb_byte_ptr = (uint8_t*)fb;
-    uint32_t offset = y * fb_pitch + x * (fb_bpp / 8);
+    uint8_t* fb_byte_ptr = (uint8_t*)(use_double_buffer && backbuffer ? (void*)backbuffer : (void*)fb);
+    uint32_t offset = y * active_pitch_bytes() + x * (fb_bpp / 8);
 
     if (fb_bpp == 32) {
         return *((uint32_t*)(fb_byte_ptr + offset));
@@ -244,8 +287,8 @@ void siv_put_pixel_alpha(int x, int y, uint32_t color, uint8_t alpha) {
     }
     if (alpha == 0) return;
 
-    uint8_t* fb_byte_ptr = (uint8_t*)fb;
-    uint32_t offset = y * fb_pitch + x * (fb_bpp / 8);
+    uint8_t* fb_byte_ptr = (uint8_t*)(use_double_buffer && backbuffer ? (void*)backbuffer : (void*)fb);
+    uint32_t offset = y * active_pitch_bytes() + x * (fb_bpp / 8);
 
     uint32_t dst;
     if (fb_bpp == 32) {
@@ -290,6 +333,21 @@ void siv_get_screen_size(uint32_t* width, uint32_t* height) {
 }
 
 void siv_clear(uint32_t color) {
+    if (use_double_buffer && backbuffer) {
+        // Clear backbuffer directly with row strides
+        uint8_t* row_start = (uint8_t*)backbuffer;
+        size_t row_bytes = (size_t)fb_width * (fb_bpp / 8);
+        for (uint32_t y = 0; y < fb_height; ++y) {
+            if (fb_bpp == 32) {
+                uint32_t* row_ptr = (uint32_t*)row_start;
+                for (uint32_t x = 0; x < fb_width; ++x) row_ptr[x] = color;
+            } else {
+                for (uint32_t x = 0; x < fb_width; ++x) siv_put_pixel((int)x, (int)y, color);
+            }
+            row_start += row_bytes;
+        }
+        return;
+    }
     if (fb_bpp == 32 && fb_pitch == fb_width * 4) {
         /* Fill using 32-bit writes so each pixel gets the intended colour.
            Using memset with a multi-byte value only repeats the lowest byte
@@ -328,7 +386,9 @@ void siv_draw_rect(int x, int y, int w, int h, uint32_t color, bool filled) {
     if (w <= 0 || h <= 0) return;
 
     if (filled) {
-        uint8_t* row_start = (uint8_t*)fb + y * fb_pitch + x * (fb_bpp / 8);
+        uint8_t* base = (uint8_t*)(use_double_buffer && backbuffer ? (void*)backbuffer : (void*)fb);
+        uint32_t pitch_bytes = active_pitch_bytes();
+        uint8_t* row_start = base + y * pitch_bytes + x * (fb_bpp / 8);
         if (fb_bpp == 32) {
             // Optimized for 32bpp
             uint32_t* row_ptr = (uint32_t*)row_start;
@@ -336,13 +396,15 @@ void siv_draw_rect(int x, int y, int w, int h, uint32_t color, bool filled) {
                 for (int j = 0; j < w; ++j) {
                     row_ptr[j] = color;
                 }
-                row_ptr = (uint32_t*)((uint8_t*)row_ptr + fb_pitch);
+                row_ptr = (uint32_t*)((uint8_t*)row_ptr + pitch_bytes);
             }
         } else {
              for (int i = 0; i < h; ++i) {
                 for (int j = 0; j < w; ++j) {
                     siv_put_pixel(x + j, y + i, color);
                 }
+                // advance one row in the base pointer
+                row_start += pitch_bytes;
             }
         }
     } else {

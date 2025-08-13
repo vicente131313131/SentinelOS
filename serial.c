@@ -49,3 +49,19 @@ void serial_writehex(uint64_t n) {
     }
     serial_writestring(&buffer[i + 1]);
 } 
+
+void serial_writedec(uint64_t n) {
+    char buf[21];
+    int i = 0;
+    if (n == 0) {
+        serial_write('0');
+        return;
+    }
+    while (n > 0 && i < (int)sizeof(buf)) {
+        buf[i++] = (char)('0' + (n % 10));
+        n /= 10;
+    }
+    while (i--) {
+        serial_write(buf[i]);
+    }
+}

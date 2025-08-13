@@ -80,6 +80,15 @@ mouse.o: mouse.c mouse.h
 vbe.o: vbe.c vbe.h
 	$(CC) $(CFLAGS) vbe.c -o vbe.o
 
+bochs_vbe.o: bochs_vbe.c bochs_vbe.h
+	$(CC) $(CFLAGS) bochs_vbe.c -o bochs_vbe.o
+
+speaker.o: speaker.c speaker.h
+	$(CC) $(CFLAGS) speaker.c -o speaker.o
+
+audio.o: audio.c audio.h
+	$(CC) $(CFLAGS) audio.c -o audio.o
+
 SpringIntoView/spring_into_view.o: SpringIntoView/spring_into_view.c SpringIntoView/spring_into_view.h
 	$(CC) $(CFLAGS) -c SpringIntoView/spring_into_view.c -o SpringIntoView/spring_into_view.o
 
@@ -87,7 +96,7 @@ SpringIntoView/stb_truetype_impl.o: SpringIntoView/stb_truetype_impl.c
 	$(CC) $(CFLAGS) -c SpringIntoView/stb_truetype_impl.c -o SpringIntoView/stb_truetype_impl.o
 
 ASM_OBJS = isr_asm.o
-C_SRCS = kernel.c isr.c idt.c pic.c pmm.c pit.c keyboard.c serial.c string.c vfs.c initrd.c heap.c vmm.c mouse.c vbe.c bochs_vbe.c speaker.c SpringIntoView/spring_into_view.c SpringIntoView/stb_truetype_impl.c
+C_SRCS = kernel.c isr.c idt.c pic.c pmm.c pit.c keyboard.c serial.c string.c vfs.c initrd.c heap.c vmm.c mouse.c vbe.c bochs_vbe.c speaker.c audio.c gui.c SpringIntoView/spring_into_view.c SpringIntoView/stb_truetype_impl.c
 OBJS = $(C_SRCS:.c=.o) $(ASM_OBJS)
 
 $(KERNEL): $(OBJS) multiboot_header.o kernel_entry.o
@@ -103,7 +112,9 @@ $(ISO): $(BOOT) $(KERNEL) $(INITRD)
 	echo 'terminal_output gfxterm' >> iso/boot/grub/grub.cfg
 	echo 'menuentry "SentinelOS" {' >> iso/boot/grub/grub.cfg
 	echo '  insmod all_video' >> iso/boot/grub/grub.cfg
-	echo '  set gfxmode=1920x1080x32' >> iso/boot/grub/grub.cfg
+	echo '  insmod gfxterm' >> iso/boot/grub/grub.cfg
+	echo '  set gfxmode=auto' >> iso/boot/grub/grub.cfg
+	echo '  set gfxpayload=1024x768x32' >> iso/boot/grub/grub.cfg
 	echo '  set gfxpayload=keep' >> iso/boot/grub/grub.cfg
 	echo '  multiboot2 /boot/kernel.bin' >> iso/boot/grub/grub.cfg
 	echo '  module2 /boot/initrd.tar initrd.tar' >> iso/boot/grub/grub.cfg

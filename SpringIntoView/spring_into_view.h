@@ -7,6 +7,11 @@
 
 // Initialize the graphics library with framebuffer info
 void siv_init(uint32_t width, uint32_t height, uint32_t pitch, uint32_t bpp, void* framebuffer);
+// Enable or disable software double buffering. When enabled, drawing goes to a back buffer
+// and requires calling siv_present() each frame to copy to the real framebuffer.
+void siv_enable_double_buffer(bool enable);
+// Copy back buffer to the real framebuffer if double buffering is enabled.
+void siv_present(void);
 
 // Initialize the font from embedded TTF data
 bool siv_init_font(void);
